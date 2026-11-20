@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Xciter</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="splash" aria-hidden="true">
+  <svg class="mark" viewBox="28 28 50 60"><path d="M38,36L70,72M70,36L38,72" fill="none" stroke="var(--accent)" stroke-width="9" stroke-linecap="round"/><path d="M31,80v-2M39,82v-6M47,84v-10M55,84v-10M63,82v-6M71,80v-2" fill="none" stroke="var(--text)" stroke-width="3" stroke-linecap="round"/></svg>
+  <img class="by" src="softiva.png" alt="" width="48" height="48">
+</div>
+<div id="shell">
+  <nav id="rail" aria-label="Main">
+    <div id="brand"><svg class="logo" viewBox="28 28 50 60" aria-hidden="true"><path d="M38,36L70,72M70,36L38,72" fill="none" stroke="var(--accent)" stroke-width="9" stroke-linecap="round"/><path d="M31,80v-2M39,82v-6M47,84v-10M55,84v-10M63,82v-6M71,80v-2" fill="none" stroke="var(--text)" stroke-width="3" stroke-linecap="round"/></svg><span>Xciter</span></div>
+    <button data-page="playing"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Playing</button>
+    <button data-page="library"><svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm2-3h12v2H6zm-3 6h18v12H3zm9 2v5.5a2 2 0 1 0 1.5 1.9V13H16v-2z"/></svg>Library</button>
+    <button data-page="playlists"><svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm14-8v8.2a3 3 0 1 0 2 2.8V8h3V6z"/></svg>Playlists</button>
+    <button data-page="sound"><svg viewBox="0 0 24 24"><path d="M3 7h9.2a3 3 0 0 1 5.6 0H21v2h-3.2a3 3 0 0 1-5.6 0H3zm0 8h3.2a3 3 0 0 1 5.6 0H21v2h-9.2a3 3 0 0 1-5.6 0H3z"/></svg>Sound</button>
+    <button data-page="settings"><svg viewBox="0 0 24 24"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>Settings</button>
+    <div id="device"></div>
+  </nav>
+  <main id="page"></main>
+  <footer id="bar"></footer>
+</div>
+<div id="overlay" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

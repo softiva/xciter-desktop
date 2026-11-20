@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- With Xciter Pro, Xciter finds your other devices on the local network by Bonjour; macOS asks once. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Xciter finds your other devices on this network so you can play their music, and lets them find this computer.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_xciter._tcp</string>
+	</array>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright Softiva</string>
+</dict>
+</plist>

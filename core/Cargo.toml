@@ -1,0 +1,26 @@
+[package]
+name = "xciter-core"
+version = "0.1.0"
+edition = "2021"
+
+# The player itself: no window, so all of it can be tested from the command line.
+[dependencies]
+symphonia = { version = "0.5", features = ["all"] }
+cpal = "0.15"
+rtrb = "0.3"
+rubato = "0.15"
+lofty = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rayon = "1"
+rand = "0.8"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring"] }
+sha2 = "0.10"
+mdns-sd = "0.13"
+gethostname = "0.5"
+ureq = { version = "2", features = ["json"] }
+ed25519-dalek = "2"
+hmac = "0.12"

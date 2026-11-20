@@ -1,0 +1,16 @@
+{
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://softiva.app/xciter" },
+        { "url": "https://softiva.app/xciter/*" },
+        { "url": "mailto:hello@softiva.app*" }
+      ]
+    }
+  ]
+}

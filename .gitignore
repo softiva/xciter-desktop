@@ -1,0 +1,9 @@
+target/
+node_modules/
+dist/
+app/gen/
+.keys/
+*.p8
+*.pem
+*.key
+.env
