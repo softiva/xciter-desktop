@@ -291,15 +291,21 @@ fn respond(tls: &mut Tls, status: &str, kind: &str, body: &[u8]) -> std::io::Res
     tls.flush()
 }
 
-fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std::io::Result<()> {
-    tcp.set_read_timeout(Some(Duration::from_secs(120)))?;
-    let connection = ServerConnection::new(config).map_err(std::io::Error::other)?;
-    let mut tls = StreamOwned::new(connection, tcp);
+/// One request's first line and headers. The body, if any, is still on the stream.
+struct Request {
+    method: String,
+    path: String,
+    query: String,
+    headers: HashMap<String, String>,
+}
+
+/// Reads up to the blank line after the headers; `None` if the stream ends first or the head is over 16 KiB.
+fn read_request(tls: &mut Tls) -> std::io::Result<Option<Request>> {
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
         if tls.read(&mut byte)? == 0 || head.len() > 16 * 1024 {
-            return Ok(());
+            return Ok(None);
         }
         head.push(byte[0]);
     }
@@ -318,14 +324,44 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
     }
     let mut parts = target.split('?');
     let (path, query) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    Ok(Some(Request {
+        method: method.to_string(),
+        path: path.to_string(),
+        query: query.to_string(),
+        headers,
+    }))
+}
+
+/// Whether the request carries the token of a device paired with this computer.
+fn is_paired(shared: &Shared, headers: &HashMap<String, String>) -> bool {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    let hashed = sha(token.as_bytes());
+    !token.is_empty()
+        && lock(&shared.identity)
+            .devices
+            .iter()
+            .any(|d| d.token_hash == hashed)
+}
+
+/// Answers one connection. `/info` and `/pair` are open; everything else needs a paired device's token.
+fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std::io::Result<()> {
+    tcp.set_read_timeout(Some(Duration::from_secs(120)))?;
+    let connection = ServerConnection::new(config).map_err(std::io::Error::other)?;
+    let mut tls = StreamOwned::new(connection, tcp);
+    let Some(request) = read_request(&mut tls)? else {
+        return Ok(());
+    };
+    let (method, path) = (request.method.as_str(), request.path.as_str());
 
     if method == "GET" && path == "/info" {
-        let id = lock(&shared.identity).host_id.clone();
-        let library_version = shared.library_version.load(Ordering::Relaxed);
-        return respond(&mut tls, "200 OK", "application/json", json!({ "id": id, "name": shared.name, "version": 1, "libraryVersion": library_version }).to_string().as_bytes());
+        return serve_info(&mut tls, &shared);
     }
     if method == "POST" && path == "/pair" {
-        let length: usize = headers
+        let length: usize = request
+            .headers
             .get("content-length")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
@@ -334,62 +370,74 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
         tls.read_exact(&mut body)?;
         return pair(&mut tls, &shared, &body);
     }
-
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or("");
-    let hashed = sha(token.as_bytes());
-    if token.is_empty()
-        || !lock(&shared.identity)
-            .devices
-            .iter()
-            .any(|d| d.token_hash == hashed)
-    {
+    if !is_paired(&shared, &request.headers) {
         return respond(&mut tls, "401 Unauthorized", "text/plain", b"not paired");
     }
-
     if method == "GET" && path == "/library" {
-        let songs: Vec<_> = lock(&shared.songs).iter().map(|(id, (t, _))| json!({
-            "id": id, "title": t.title, "artist": t.artist, "album": t.album, "albumArtist": t.album_artist,
-            "trackNumber": t.track_number, "discNumber": t.disc_number, "duration": t.duration, "kind": t.kind, "sampleRate": t.sample_rate,
-            "ext": Path::new(&t.id).extension().and_then(|e| e.to_str()).unwrap_or(""),
-            "gain": { "trackGain": t.gain.track_gain, "albumGain": t.gain.album_gain, "trackPeak": t.gain.track_peak, "albumPeak": t.gain.album_peak },
-        })).collect();
-        return respond(
-            &mut tls,
-            "200 OK",
-            "application/json",
-            serde_json::to_vec(&songs)?.as_slice(),
-        );
+        return serve_library(&mut tls, &shared);
     }
     if method == "GET" {
         if let Some(id) = path.strip_prefix("/file/") {
-            let found = lock(&shared.songs).get(id).map(|(_, p)| p.clone());
-            let Some(file) = found else {
-                return respond(&mut tls, "404 Not Found", "text/plain", b"no such song");
-            };
-            let mut opened = File::open(file)?;
-            write!(tls, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", opened.metadata()?.len())?;
-            std::io::copy(&mut opened, &mut tls)?;
-            return tls.flush();
+            return serve_file(&mut tls, &shared, id);
         }
         if let Some(id) = path.strip_prefix("/art/") {
-            let found = lock(&shared.songs).get(id).map(|(_, p)| p.clone());
-            let size: u32 = query
-                .strip_prefix("size=")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(256)
-                .clamp(32, 1024);
-            let data =
-                found.and_then(|p| crate::library::artwork_bytes(&p.to_string_lossy(), size));
-            return match data {
-                Some(data) => respond(&mut tls, "200 OK", "image/jpeg", &data),
-                None => respond(&mut tls, "404 Not Found", "text/plain", b"no art"),
-            };
+            return serve_art(&mut tls, &shared, id, &request.query);
         }
     }
     respond(&mut tls, "404 Not Found", "text/plain", b"not found")
+}
+
+fn serve_info(tls: &mut Tls, shared: &Shared) -> std::io::Result<()> {
+    let id = lock(&shared.identity).host_id.clone();
+    let library_version = shared.library_version.load(Ordering::Relaxed);
+    let info =
+        json!({ "id": id, "name": shared.name, "version": 1, "libraryVersion": library_version });
+    respond(
+        tls,
+        "200 OK",
+        "application/json",
+        info.to_string().as_bytes(),
+    )
+}
+
+fn serve_library(tls: &mut Tls, shared: &Shared) -> std::io::Result<()> {
+    let songs: Vec<_> = lock(&shared.songs).iter().map(|(id, (t, _))| json!({
+        "id": id, "title": t.title, "artist": t.artist, "album": t.album, "albumArtist": t.album_artist,
+        "trackNumber": t.track_number, "discNumber": t.disc_number, "duration": t.duration, "kind": t.kind, "sampleRate": t.sample_rate,
+        "ext": Path::new(&t.id).extension().and_then(|e| e.to_str()).unwrap_or(""),
+        "gain": { "trackGain": t.gain.track_gain, "albumGain": t.gain.album_gain, "trackPeak": t.gain.track_peak, "albumPeak": t.gain.album_peak },
+    })).collect();
+    respond(
+        tls,
+        "200 OK",
+        "application/json",
+        serde_json::to_vec(&songs)?.as_slice(),
+    )
+}
+
+fn serve_file(tls: &mut Tls, shared: &Shared, id: &str) -> std::io::Result<()> {
+    let found = lock(&shared.songs).get(id).map(|(_, p)| p.clone());
+    let Some(file) = found else {
+        return respond(tls, "404 Not Found", "text/plain", b"no such song");
+    };
+    let mut opened = File::open(file)?;
+    write!(tls, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", opened.metadata()?.len())?;
+    std::io::copy(&mut opened, tls)?;
+    tls.flush()
+}
+
+fn serve_art(tls: &mut Tls, shared: &Shared, id: &str, query: &str) -> std::io::Result<()> {
+    let found = lock(&shared.songs).get(id).map(|(_, p)| p.clone());
+    let size: u32 = query
+        .strip_prefix("size=")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(256)
+        .clamp(32, 1024);
+    let data = found.and_then(|p| crate::library::artwork_bytes(&p.to_string_lossy(), size));
+    match data {
+        Some(data) => respond(tls, "200 OK", "image/jpeg", &data),
+        None => respond(tls, "404 Not Found", "text/plain", b"no art"),
+    }
 }
 
 /// Waits for the person at this computer to answer, then hands the device its token.

@@ -38,65 +38,8 @@ impl Remote {
                         break;
                     }
                     match event {
-                        ServiceEvent::ServiceResolved(info) => {
-                            let Some(id) = info.get_property_val_str("id").map(str::to_string)
-                            else {
-                                continue;
-                            };
-                            if id == me.own_id {
-                                continue;
-                            }
-                            let name = info
-                                .get_fullname()
-                                .strip_suffix(&format!(".{SERVICE}"))
-                                .unwrap_or(info.get_fullname())
-                                .to_string();
-                            let port = info.get_port();
-                            let mut addresses: Vec<(Ipv4Addr, u16)> = info
-                                .get_addresses_v4()
-                                .into_iter()
-                                .filter(|a| {
-                                    !a.is_loopback() && !a.is_link_local() && !a.is_unspecified()
-                                })
-                                .map(|a| (*a, port))
-                                .collect();
-                            addresses.sort();
-                            let found = Nearby {
-                                id: id.clone(),
-                                name,
-                                addresses,
-                            };
-                            let paired = {
-                                let mut state = lock(&me.state);
-                                let new = state.nearby.get(&id) != Some(&found);
-                                state.nearby.insert(id.clone(), found);
-                                new && state.paired.iter().any(|h| h.id == id)
-                            };
-                            me.changed();
-                            if paired {
-                                let again = me.clone();
-                                thread::spawn(move || again.connect(&id));
-                            }
-                        }
-                        ServiceEvent::ServiceRemoved(_, fullname) => {
-                            let mut state = lock(&me.state);
-                            let name = fullname
-                                .strip_suffix(&format!(".{SERVICE}"))
-                                .unwrap_or(&fullname)
-                                .to_string();
-                            if let Some(id) = state
-                                .nearby
-                                .values()
-                                .find(|n| n.name == name)
-                                .map(|n| n.id.clone())
-                            {
-                                state.nearby.remove(&id);
-                                state.online.remove(&id);
-                                state.address.remove(&id);
-                            }
-                            drop(state);
-                            me.changed();
-                        }
+                        ServiceEvent::ServiceResolved(info) => me.found(&info),
+                        ServiceEvent::ServiceRemoved(_, fullname) => me.lost(&fullname),
                         _ => {}
                     }
                 }
@@ -114,6 +57,66 @@ impl Remote {
                 me.heartbeat();
             })
             .ok();
+    }
+
+    /// A device announced itself; if it is paired and new or changed, its library is read again.
+    fn found(self: &Arc<Self>, info: &mdns_sd::ServiceInfo) {
+        let Some(id) = info.get_property_val_str("id").map(str::to_string) else {
+            return;
+        };
+        if id == self.own_id {
+            return;
+        }
+        let name = info
+            .get_fullname()
+            .strip_suffix(&format!(".{SERVICE}"))
+            .unwrap_or(info.get_fullname())
+            .to_string();
+        let port = info.get_port();
+        let mut addresses: Vec<(Ipv4Addr, u16)> = info
+            .get_addresses_v4()
+            .into_iter()
+            .filter(|a| !a.is_loopback() && !a.is_link_local() && !a.is_unspecified())
+            .map(|a| (*a, port))
+            .collect();
+        addresses.sort();
+        let found = Nearby {
+            id: id.clone(),
+            name,
+            addresses,
+        };
+        let paired = {
+            let mut state = lock(&self.state);
+            let new = state.nearby.get(&id) != Some(&found);
+            state.nearby.insert(id.clone(), found);
+            new && state.paired.iter().any(|h| h.id == id)
+        };
+        self.changed();
+        if paired {
+            let again = self.clone();
+            thread::spawn(move || again.connect(&id));
+        }
+    }
+
+    /// A device said goodbye: it is no longer nearby or online.
+    fn lost(&self, fullname: &str) {
+        let mut state = lock(&self.state);
+        let name = fullname
+            .strip_suffix(&format!(".{SERVICE}"))
+            .unwrap_or(fullname)
+            .to_string();
+        if let Some(id) = state
+            .nearby
+            .values()
+            .find(|n| n.name == name)
+            .map(|n| n.id.clone())
+        {
+            state.nearby.remove(&id);
+            state.online.remove(&id);
+            state.address.remove(&id);
+        }
+        drop(state);
+        self.changed();
     }
 
     /// Stops looking and forgets what was found; the pairings stay.

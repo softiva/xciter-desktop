@@ -47,25 +47,9 @@ impl Remote {
                 me.changed();
             }
         };
-        // The first look has no certificate to compare with: it records the one it sees.
-        let Some(look) = Client::new(None, Duration::from_secs(5)) else {
-            return fail(self, "Couldn't start a secure connection.");
-        };
-        let mut reached = None;
-        for (ip, port) in &found.addresses {
-            if look
-                .agent
-                .get(&format!("https://{ip}:{port}/info"))
-                .timeout(Duration::from_secs(4))
-                .call()
-                .is_ok()
-            {
-                reached = Some((*ip, *port));
-                break;
-            }
-        }
-        let (Some((ip, port)), Some(print)) = (reached, look.seen()) else {
-            return fail(self, &format!("Couldn't reach {}.", found.name));
+        let ((ip, port), print) = match first_look(&found) {
+            Ok(seen) => seen,
+            Err(message) => return fail(self, &message),
         };
         let mut random = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut random);
@@ -109,23 +93,32 @@ impl Remote {
                 &format!("Couldn't finish pairing with {}. Try again.", found.name),
             );
         };
-        {
-            let mut state = lock(&self.state);
-            state.paired.retain(|h| h.id != found.id);
-            state.paired.push(PairedHost {
-                id: found.id.clone(),
-                name: found.name.clone(),
-                fingerprint: print,
-                token,
-            });
-            state.address.insert(found.id.clone(), (ip, port));
-            state.pairing = Some(Pairing::Done {
-                name: found.name.clone(),
-            });
-            self.save_hosts(&state);
-        }
+        self.remember(&found, print, token, (ip, port));
         self.changed();
         self.connect(&found.id);
+    }
+
+    /// Saves a finished pairing: the device, the certificate it showed and the token it gave.
+    fn remember(
+        &self,
+        found: &Nearby,
+        fingerprint: String,
+        token: String,
+        address: (Ipv4Addr, u16),
+    ) {
+        let mut state = lock(&self.state);
+        state.paired.retain(|h| h.id != found.id);
+        state.paired.push(PairedHost {
+            id: found.id.clone(),
+            name: found.name.clone(),
+            fingerprint,
+            token,
+        });
+        state.address.insert(found.id.clone(), address);
+        state.pairing = Some(Pairing::Done {
+            name: found.name.clone(),
+        });
+        self.save_hosts(&state);
     }
 
     /// Stops reading a device and forgets the pairing.
@@ -140,5 +133,24 @@ impl Remote {
         drop(state);
         let _ = fs::remove_file(self.dir.join(format!("remote-{id}.json")));
         self.changed();
+    }
+}
+
+/// The first look at a device has no certificate to compare with: it records the one it sees, at the
+/// first address that answers. `Err` is the message for the person.
+fn first_look(found: &Nearby) -> Result<((Ipv4Addr, u16), String), String> {
+    let Some(look) = Client::new(None, Duration::from_secs(5)) else {
+        return Err("Couldn't start a secure connection.".into());
+    };
+    let reached = found.addresses.iter().copied().find(|(ip, port)| {
+        look.agent
+            .get(&format!("https://{ip}:{port}/info"))
+            .timeout(Duration::from_secs(4))
+            .call()
+            .is_ok()
+    });
+    match (reached, look.seen()) {
+        (Some(address), Some(print)) => Ok((address, print)),
+        _ => Err(format!("Couldn't reach {}.", found.name)),
     }
 }
