@@ -7,6 +7,12 @@
 //! license server, which is what a fork or a local test server (see `LicenseConfig`) wants. A release build with no key fails here, loudly.
 //! The key is never printed and never committed; it ends up inside the built app, from where anyone can lift it, so it is
 //! friction against casual scanners and nothing more.
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "a build script reports failure by panicking; cargo always sets the variables unwrapped here"
+)]
+
 use std::{env, fs, path::PathBuf};
 
 fn main() {
@@ -16,14 +22,32 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DESKTOP_KEY_FILE");
     println!("cargo:rerun-if-env-changed=PROFILE");
 
-    let default = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../.keys").join(if release { "desktop-prod.key" } else { "desktop-stage.key" });
-    let from_env = env::var("XCITER_DESKTOP_KEY").ok().filter(|k| !k.trim().is_empty());
-    let file = env::var("DESKTOP_KEY_FILE").ok().map(PathBuf::from).unwrap_or(default);
+    let default = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("../.keys")
+        .join(if release {
+            "desktop-prod.key"
+        } else {
+            "desktop-stage.key"
+        });
+    let from_env = env::var("XCITER_DESKTOP_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty());
+    let file = env::var("DESKTOP_KEY_FILE")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or(default);
     println!("cargo:rerun-if-changed={}", file.display());
-    let key = from_env.or_else(|| fs::read_to_string(&file).ok()).map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    let key = from_env
+        .or_else(|| fs::read_to_string(&file).ok())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
 
     if release && key.is_none() {
         panic!("A release build needs the license server's production desktop key: set XCITER_DESKTOP_KEY, or DESKTOP_KEY_FILE to the file holding it (.keys/desktop-prod.key).");
     }
-    fs::write(PathBuf::from(env::var("OUT_DIR").unwrap()).join("desktop_key.txt"), key.unwrap_or_default()).unwrap();
+    fs::write(
+        PathBuf::from(env::var("OUT_DIR").unwrap()).join("desktop_key.txt"),
+        key.unwrap_or_default(),
+    )
+    .unwrap();
 }

@@ -5,3 +5,12 @@ resolver = "2"
 [profile.release]
 lto = "thin"
 strip = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Fallible input is handled; a broken invariant uses `expect("invariant: ...")` (expect_used stays allowed).
+unwrap_used = "warn"
+panic = "warn"

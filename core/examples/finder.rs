@@ -11,15 +11,28 @@ fn main() {
     println!("Looking for 10 seconds…");
     std::thread::sleep(Duration::from_secs(10));
     let view = remote.view();
-    println!("{}", serde_json::to_string_pretty(&view).unwrap());
-    let Some(name) = std::env::args().nth(1) else { return };
-    let Some(id) = view["nearby"].as_array().and_then(|l| l.iter().find(|n| n["name"] == name.as_str())).and_then(|n| n["id"].as_str()).map(str::to_string) else { return println!("{name} is not nearby") };
+    println!("{view:#}");
+    let Some(name) = std::env::args().nth(1) else {
+        return;
+    };
+    let Some(id) = view["nearby"]
+        .as_array()
+        .and_then(|l| l.iter().find(|n| n["name"] == name.as_str()))
+        .and_then(|n| n["id"].as_str())
+        .map(str::to_string)
+    else {
+        return println!("{name} is not nearby");
+    };
     remote.pair(&id);
     for _ in 0..120 {
         std::thread::sleep(Duration::from_secs(1));
         match remote.pairing() {
             Some(Pairing::Confirm { code, .. }) => println!("code {code}: choose Allow on {name}"),
-            Some(Pairing::Done { .. }) => { std::thread::sleep(Duration::from_secs(2)); println!("{} songs", remote.tracks().len()); return }
+            Some(Pairing::Done { .. }) => {
+                std::thread::sleep(Duration::from_secs(2));
+                println!("{} songs", remote.tracks().len());
+                return;
+            }
             Some(Pairing::Failed { message, .. }) => return println!("{message}"),
             _ => {}
         }

@@ -1,0 +1,74 @@
+44100-Acoustic-headroomfalse 827701dc0309d40c
+44100-Acoustic-headroomtrue cf9db272e29ab730
+44100-Bass Boost-headroomfalse fc3f646e75ca1b10
+44100-Bass Boost-headroomtrue 4002e6fedbc1e88d
+44100-Car-headroomfalse f5c007e5c4ea474c
+44100-Car-headroomtrue 5d5281c5872934b8
+44100-Classical-headroomfalse c9d4e29bc2f6d3c9
+44100-Classical-headroomtrue 09cde949d348ad57
+44100-Dance-headroomfalse e3ae9f310928ab58
+44100-Dance-headroomtrue afdc2ca923fba5cf
+44100-EDM-headroomfalse eed0d26589aa6d56
+44100-EDM-headroomtrue f5f4b41020a7894f
+44100-Flat-headroomfalse facd5f931ec496e9
+44100-Flat-headroomtrue cba4448197886b13
+44100-Heavy Metal-headroomfalse 3cbf036311388671
+44100-Heavy Metal-headroomtrue 1a8ebe3ec7b0c4b0
+44100-Heavy-headroomfalse d224a1dced1a81af
+44100-Heavy-headroomtrue 2041ce9b0ba1d73a
+44100-Hip-Hop-headroomfalse bfef624fb19e28e4
+44100-Hip-Hop-headroomtrue 702a2ac9ce6f0284
+44100-Jazz-headroomfalse 3ba058b0257d8aae
+44100-Jazz-headroomtrue fc4160a4732aa509
+44100-Nu Metal-headroomfalse 200339f1720d2672
+44100-Nu Metal-headroomtrue 6ea2bb444d0d4d29
+44100-Pop-headroomfalse 3875709b95aee817
+44100-Pop-headroomtrue b1f750525205c421
+44100-Rock-headroomfalse 2e10e4e070c7a2a4
+44100-Rock-headroomtrue e408144a4d0d81d4
+44100-Smooth-headroomfalse e638ccaae8e1da9a
+44100-Smooth-headroomtrue ff30e4c87112d491
+44100-Treble Boost-headroomfalse 7fdd770cbcca3488
+44100-Treble Boost-headroomtrue f870d4b7dc243936
+44100-V Curve-headroomfalse 7aaced2a6a3e86f8
+44100-V Curve-headroomtrue db566c11224b6880
+44100-Vocals-headroomfalse 1e25acf01a45d9c7
+44100-Vocals-headroomtrue cb7a1bce37fdb16d
+44100-off facd5f931ec496e9
+48000-Acoustic-headroomfalse 1a697d35485b67ca
+48000-Acoustic-headroomtrue 600f6d903d9eacf4
+48000-Bass Boost-headroomfalse 81a8481767424b24
+48000-Bass Boost-headroomtrue aea8548980d26120
+48000-Car-headroomfalse b0353e1702b4c70b
+48000-Car-headroomtrue f44024b99fd08e78
+48000-Classical-headroomfalse 1f6ea2c616c4b774
+48000-Classical-headroomtrue 10dde690d124ad3e
+48000-Dance-headroomfalse eaa6ee774aaf709f
+48000-Dance-headroomtrue 8cab4346d8e5da30
+48000-EDM-headroomfalse 5f2e242fff74b496
+48000-EDM-headroomtrue 052c99047cb3b014
+48000-Flat-headroomfalse 5141241b2c08503d
+48000-Flat-headroomtrue 148ceb6cd17586a5
+48000-Heavy Metal-headroomfalse 03ed2b39533e4b48
+48000-Heavy Metal-headroomtrue 425cf7b3102a8d83
+48000-Heavy-headroomfalse 51745c5d11dbb1b3
+48000-Heavy-headroomtrue 2daadad49654c406
+48000-Hip-Hop-headroomfalse b9a2486f9bc2f967
+48000-Hip-Hop-headroomtrue d67afb8d90087d92
+48000-Jazz-headroomfalse 1229a64674229780
+48000-Jazz-headroomtrue 5c3d3acb2ff9071f
+48000-Nu Metal-headroomfalse 33354d69191f9011
+48000-Nu Metal-headroomtrue f319f2bdb0de695a
+48000-Pop-headroomfalse 3f3969cdaf6572ad
+48000-Pop-headroomtrue 1807c3ba413d6433
+48000-Rock-headroomfalse 63ddf5645fac6234
+48000-Rock-headroomtrue 2bcc577ac8c759cc
+48000-Smooth-headroomfalse 20e6255f7d49f6cb
+48000-Smooth-headroomtrue 7fe25e0aa8c9d96a
+48000-Treble Boost-headroomfalse a1f5824ba0cee5cf
+48000-Treble Boost-headroomtrue 55c39a06d47583ad
+48000-V Curve-headroomfalse ecd7bc949983973d
+48000-V Curve-headroomtrue f3496646aa1defd6
+48000-Vocals-headroomfalse 1409fe3d8a205cb4
+48000-Vocals-headroomtrue 1fe62630e0b2ba31
+48000-off 5141241b2c08503d

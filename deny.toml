@@ -1,0 +1,53 @@
+# Supply-chain checks: `cargo deny check` (run before adding or upgrading a dependency).
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+# Each ignore says why it does not apply or why it cannot be fixed here. Review them when Tauri is upgraded.
+ignore = [
+    # Unmaintained crates deep in Tauri's GTK/D-Bus stack (Linux only); only a Tauri upgrade can drop them.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: build-time macro, pulled in by tauri via glib" },
+    { id = "RUSTSEC-2024-0436", reason = "paste: build-time macro, pulled in by tauri" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: pulled in by tauri via zbus" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: pulled in by tauri via zbus" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: pulled in by tauri via zbus" },
+    # cookie: only processes that fork() and then add private cookies are affected; Xciter does neither,
+    # and tauri/wry pin cookie ^0.18.
+    { id = "RUSTSEC-2026-0594", reason = "not applicable: no fork() and no private cookies" },
+]
+
+[licenses]
+# The licences already used by the dependency tree, all permissive or file-level copyleft (MPL-2.0: symphonia,
+# cssparser, selectors). Adding a new licence here is a deliberate decision.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[licenses.private]
+# This workspace's own crates are not published (see `publish = false`).
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

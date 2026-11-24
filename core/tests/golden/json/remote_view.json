@@ -1,0 +1,16 @@
+{
+  "cacheBytes": 0,
+  "nearby": [
+    {
+      "id": "h1",
+      "name": "Ada's Mac"
+    },
+    {
+      "id": "h2",
+      "name": "Zed's PC"
+    }
+  ],
+  "paired": [],
+  "pairing": null,
+  "running": false
+}
