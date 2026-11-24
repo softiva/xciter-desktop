@@ -164,5 +164,5 @@ app/src/           main.rs (builder and wiring only) · commands/{player,sound,l
 ### Left as is, with reasons
 - **Functions over 60 lines:** `engine::renderer::render_block` (121), `deck::refill` (78), `output::output_thread` (73), `deck::open` (69). These are the audio path and have no test harness that renders through the engine, so splitting them is a follow-up once one exists. `main` (67) lists the 56 commands. `dsp::effects::{new, process}` (61): a struct literal, and the per-sample hot path. `library::read` (70), `player::handle` (65), `share::start` (64), `run_pairing` (64): just over the limit and cohesive.
 - **`devices_state`** still returns `serde_json::Value`, because it is `remote::Remote::view()` (already snapshot-tested) plus a `locked` flag.
-- **`cargo deny check` fails on RUSTSEC-2026-0592** (`url` 2.5.8, through tauri). The fix is `cargo update -p url` (to 2.5.9), a dependency change that is out of scope here. It is not ignored in `deny.toml`, on purpose.
+- **RUSTSEC-2026-0592** (`url` 2.5.8, through tauri): fixed after `/check` with `cargo update -p url` (url 2.5.9, form_urlencoded 1.2.3). `cargo deny check` now passes.
 - **AC10 manual smoke test** has not been run (it needs a person at the app). See the checklist in Phase 8.
