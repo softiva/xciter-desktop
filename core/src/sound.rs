@@ -135,18 +135,19 @@ impl Sound {
         if !self.effects_on {
             return EffectSettings::off();
         }
-        EffectSettings::full(
-            if self.exciter_on { self.amount } else { 0.0 },
-            self.start_hz,
-            if self.bass_on { self.bass_db } else { 0.0 },
-            self.headroom,
-            self.even,
-            self.air_hz,
-            self.bass_band_hz,
-            self.bass_air_hz,
-            self.crystal,
-            self.dither,
-        )
+        EffectSettings {
+            exciter: if self.exciter_on { self.amount } else { 0.0 },
+            exciter_hz: self.start_hz,
+            bass_db: if self.bass_on { self.bass_db } else { 0.0 },
+            headroom: self.headroom,
+            even: self.even,
+            air_hz: self.air_hz,
+            bass_band_hz: self.bass_band_hz,
+            bass_air_hz: self.bass_air_hz,
+            crystal: self.crystal,
+            dither: self.dither,
+        }
+        .snapped()
     }
     /// Snaps every frequency choice to what is offered, so a setting saved by an older version still shows as one of the tiles,
     /// and makes the profile and the equalizer's preset agree with what is saved.

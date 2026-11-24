@@ -843,7 +843,14 @@ mod tests {
                 }
             );
         }
-        assert!(DESKTOP_NETWORK_NEEDS_PRO);
+        // Only a test build made with XCITER_NETWORK_FREE turns this off; this test fails in such a build on purpose.
+        #[expect(
+            clippy::assertions_on_constants,
+            reason = "the constant comes from the build environment"
+        )]
+        {
+            assert!(DESKTOP_NETWORK_NEEDS_PRO);
+        }
     }
 
     #[test]

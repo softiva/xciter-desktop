@@ -57,8 +57,8 @@ impl Dither {
             return clamp(v.round_ties_even());
         }
         let mut y = v;
-        for k in 0..SHAPE.len() {
-            y -= SHAPE[k] * self.error[channel][k];
+        for (shape, error) in SHAPE.iter().zip(&self.error[channel]) {
+            y -= shape * error;
         }
         let noise = self.uniform(channel) + self.uniform(channel);
         let q = clamp((y + noise + 0.5).floor()) as f64;
@@ -86,7 +86,7 @@ fn clamp(value: f64) -> i16 {
     if value.is_nan() {
         0
     } else {
-        value.min(32767.0).max(-32768.0) as i16
+        value.clamp(-32768.0, 32767.0) as i16
     }
 }
 

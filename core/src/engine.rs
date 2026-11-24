@@ -523,7 +523,7 @@ impl Deck {
             if self
                 .sample_buffer
                 .as_ref()
-                .map_or(true, |b| b.capacity() < capacity as usize * channels)
+                .is_none_or(|b| b.capacity() < capacity as usize * channels)
             {
                 self.sample_buffer = Some(SampleBuffer::<f32>::new(capacity, spec));
             }

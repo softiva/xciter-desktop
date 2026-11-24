@@ -41,7 +41,7 @@ const EVEN_BLOCK: usize = 32;
 
 /// The gain Even out applies, in dB, for a song level (mean power, dBFS) at a strength 0..1.
 pub fn even_gain_db(level_db: f64, strength: f32) -> f64 {
-    if strength <= 0.0 || !(level_db > -200.0) {
+    if strength <= 0.0 || level_db.is_nan() || level_db <= -200.0 {
         return 0.0;
     }
     let fade = ((level_db - EVEN_GATE_DB) / (EVEN_FADE_FULL_DB - EVEN_GATE_DB)).clamp(0.0, 1.0);
@@ -75,6 +75,13 @@ const BASS_HEADROOM: f32 = 0.4;
 const BASS_CEILING: f64 = KNEE as f64;
 const BASS_RELEASE_S: f64 = 0.150;
 const BASS_LOOK_AHEAD_S: f64 = 0.005;
+/// Q of a second-order Butterworth section. Deliberately the rounded 0.7071 the filters were tuned with,
+/// not exactly 1/sqrt(2): the exact value would change the output (see the golden tests).
+#[expect(
+    clippy::approx_constant,
+    reason = "the tuned value is 0.7071; FRAC_1_SQRT_2 would change the sound"
+)]
+const BUTTERWORTH_Q: f64 = 0.7071;
 const Q1: f64 = 0.5412;
 const Q2: f64 = 1.3066;
 
@@ -135,43 +142,33 @@ pub struct EffectSettings {
 
 impl EffectSettings {
     pub fn new(exciter: f32, exciter_hz: f32, bass_db: f32, headroom: bool) -> Self {
-        Self::full(
+        Self {
             exciter,
             exciter_hz,
             bass_db,
             headroom,
-            0.0,
-            AIR_DEFAULT_HZ,
-            BASS_BAND_DEFAULT_HZ,
-            BASS_AIR_DEFAULT_HZ,
-            0.0,
-            true,
-        )
+            even: 0.0,
+            air_hz: AIR_DEFAULT_HZ,
+            bass_band_hz: BASS_BAND_DEFAULT_HZ,
+            bass_air_hz: BASS_AIR_DEFAULT_HZ,
+            crystal: 0.0,
+            dither: true,
+        }
+        .snapped()
     }
-    #[allow(clippy::too_many_arguments)]
-    pub fn full(
-        exciter: f32,
-        exciter_hz: f32,
-        bass_db: f32,
-        headroom: bool,
-        even: f32,
-        air_hz: f32,
-        bass_band_hz: f32,
-        bass_air_hz: f32,
-        crystal: f32,
-        dither: bool,
-    ) -> Self {
+    /// Every amount clamped to its range and every frequency snapped to one that is offered.
+    pub fn snapped(self) -> Self {
         Self {
-            exciter: unit(exciter),
-            exciter_hz: nearest(&EXCITER_HZ, exciter_hz),
-            bass_db: unit(bass_db / BASS_MAX_DB) * BASS_MAX_DB,
-            headroom,
-            even: unit(even),
-            air_hz: nearest(&AIR_HZ, air_hz),
-            bass_band_hz: nearest(&BASS_BAND_HZ, bass_band_hz),
-            bass_air_hz: nearest(&BASS_AIR_HZ, bass_air_hz),
-            crystal: unit(crystal),
-            dither,
+            exciter: unit(self.exciter),
+            exciter_hz: nearest(&EXCITER_HZ, self.exciter_hz),
+            bass_db: unit(self.bass_db / BASS_MAX_DB) * BASS_MAX_DB,
+            headroom: self.headroom,
+            even: unit(self.even),
+            air_hz: nearest(&AIR_HZ, self.air_hz),
+            bass_band_hz: nearest(&BASS_BAND_HZ, self.bass_band_hz),
+            bass_air_hz: nearest(&BASS_AIR_HZ, self.bass_air_hz),
+            crystal: unit(self.crystal),
+            dither: self.dither,
         }
     }
     pub fn off() -> Self {
@@ -424,6 +421,17 @@ struct Channel {
 }
 
 /// What one channel makes of one frame: the music (after the Crystalizer), the music plus the exciter's air, and the bass lift.
+/// What both channels share for one frame of the chain.
+#[derive(Clone, Copy)]
+struct FrameParams {
+    level: f64,
+    crystal: f64,
+    amount: f32,
+    smoothing: f64,
+    lifting: bool,
+    harmonics: f64,
+}
+
 struct Made {
     x: f64,
     y: f64,
@@ -518,7 +526,7 @@ impl EffectsChain {
         };
         chain
             .harmonic_low
-            .high_pass(BASS_BAND_DEFAULT_HZ as f64, 0.7071, rate);
+            .high_pass(BASS_BAND_DEFAULT_HZ as f64, BUTTERWORTH_Q, rate);
         chain.harmonic_high_a.low_pass(HARMONIC_HIGH_HZ, Q1, rate);
         chain.harmonic_high_b.low_pass(HARMONIC_HIGH_HZ, Q2, rate);
         chain
@@ -527,7 +535,9 @@ impl EffectsChain {
         chain
             .harmonic_keep_b
             .high_pass(BASS_AIR_DEFAULT_HZ as f64, Q2, rate);
-        chain.harmonic_top.low_pass(HARMONIC_TOP_HZ, 0.7071, rate);
+        chain
+            .harmonic_top
+            .low_pass(HARMONIC_TOP_HZ, BUTTERWORTH_Q, rate);
         chain.configure(EffectSettings::off());
         chain
     }
@@ -539,7 +549,8 @@ impl EffectsChain {
         let rate = self.rate;
         let top = (rate * 0.20).min(EXCITER_SOURCE_TOP_HZ);
         for c in [&mut self.left, &mut self.right] {
-            c.start.high_pass(next.exciter_hz as f64, 0.7071, rate);
+            c.start
+                .high_pass(next.exciter_hz as f64, BUTTERWORTH_Q, rate);
             c.air.keep_from(next.air_hz as f64);
             c.limit_a.low_pass(top, Q1, rate);
             c.limit_b.low_pass(top, Q2, rate);
@@ -548,7 +559,7 @@ impl EffectsChain {
         }
         self.harmonic_wet = next.bass_db / BASS_MAX_DB * HARMONIC_MAX;
         self.harmonic_low
-            .high_pass(next.bass_band_hz as f64, 0.7071, rate);
+            .high_pass(next.bass_band_hz as f64, BUTTERWORTH_Q, rate);
         self.harmonic_keep_a
             .high_pass(next.bass_air_hz as f64, Q1, rate);
         self.harmonic_keep_b
@@ -611,16 +622,15 @@ impl EffectsChain {
     }
 
     #[inline(always)]
-    fn make(
-        c: &mut Channel,
-        sample: f32,
-        level: f64,
-        crystal: f64,
-        amount: f32,
-        smoothing: f64,
-        lifting: bool,
-        harmonics: f64,
-    ) -> Made {
+    fn make(c: &mut Channel, sample: f32, frame: FrameParams) -> Made {
+        let FrameParams {
+            level,
+            crystal,
+            amount,
+            smoothing,
+            lifting,
+            harmonics,
+        } = frame;
         let raw = sample as f64 * level;
         // The Crystalizer: the change since the last sample added back, a clean treble lift.
         let x = raw + (raw - c.previous) * crystal;
@@ -684,27 +694,16 @@ impl EffectsChain {
             mono += *r as f64 * level;
             harmonics = self.harmonics(mono / 2.0) * self.harmonic_wet as f64;
         }
-        let smoothing = self.smoothing;
-        let a = Self::make(
-            &mut self.left,
-            *l,
+        let frame = FrameParams {
             level,
             crystal,
             amount,
-            smoothing,
+            smoothing: self.smoothing,
             lifting,
             harmonics,
-        );
-        let b = Self::make(
-            &mut self.right,
-            *r,
-            level,
-            crystal,
-            amount,
-            smoothing,
-            lifting,
-            harmonics,
-        );
+        };
+        let a = Self::make(&mut self.left, *l, frame);
+        let b = Self::make(&mut self.right, *r, frame);
         // Only what the effects add can be eased off (the music itself is left alone), and the most of it
         // that still fits under the ceiling is the room this frame has. The exciter's air counts too.
         let mut room = 1.0f64;
@@ -945,8 +944,8 @@ impl GraphicEq {
         for band in 0..n {
             let mut filter = Biquad::default();
             Self::set(&mut filter, band, 6.0, rate);
-            for row in 0..m {
-                b[row][band] = filter.response_db(points[row], rate) / 6.0;
+            for (row, &point) in b.iter_mut().zip(points) {
+                row[band] = filter.response_db(point, rate) / 6.0;
             }
         }
         let mut a = vec![vec![0.0; 2 * n]; n];
@@ -963,19 +962,20 @@ impl GraphicEq {
                 .unwrap();
             a.swap(pivot, best);
             let scale = a[pivot][pivot];
-            for col in 0..2 * n {
-                a[pivot][col] /= scale;
+            for value in a[pivot].iter_mut() {
+                *value /= scale;
             }
-            for row in 0..n {
-                if row == pivot {
+            let pivot_row = a[pivot].clone();
+            for (index, row) in a.iter_mut().enumerate() {
+                if index == pivot {
                     continue;
                 }
-                let factor = a[row][pivot];
+                let factor = row[pivot];
                 if factor == 0.0 {
                     continue;
                 }
-                for col in 0..2 * n {
-                    a[row][col] -= factor * a[pivot][col];
+                for (value, &p) in row.iter_mut().zip(&pivot_row) {
+                    *value -= factor * p;
                 }
             }
         }
@@ -1248,10 +1248,10 @@ impl SpectrumMeter {
         Some(bars)
     }
     fn analyse(&mut self, samples: &[f32]) -> Vec<f32> {
-        for i in 0..METER_SIZE {
-            self.re[i] = samples[i] as f64 * self.window[i];
-            self.im[i] = 0.0;
+        for ((re, &sample), &window) in self.re.iter_mut().zip(samples).zip(&self.window) {
+            *re = sample as f64 * window;
         }
+        self.im.fill(0.0);
         self.fft();
         let (bin_hz, scale, span) = (
             self.rate / METER_SIZE as f64,
@@ -1320,6 +1320,11 @@ mod tests {
 
     const RATE: usize = 48000;
 
+    /// The settings in a table-friendly order; the dither switch is always on.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a positional helper keeps the many test settings readable as one-liners"
+    )]
     fn settings(
         exciter: f32,
         hz: f32,
@@ -1331,9 +1336,19 @@ mod tests {
         keep: f32,
         crystal: f32,
     ) -> EffectSettings {
-        EffectSettings::full(
-            exciter, hz, bass, headroom, even, air, band, keep, crystal, true,
-        )
+        EffectSettings {
+            exciter,
+            exciter_hz: hz,
+            bass_db: bass,
+            headroom,
+            even,
+            air_hz: air,
+            bass_band_hz: band,
+            bass_air_hz: keep,
+            crystal,
+            dither: true,
+        }
+        .snapped()
     }
 
     /// Two seconds of a stereo sine through the chain; returns the left channel.
@@ -1984,12 +1999,11 @@ mod tests {
         let mut m = OriginalMatch::new(48000.0);
         let (mut dry, mut out) = (vec![0.0f32; 4096], vec![0.0f32; 4096]);
         for block in 0..24 {
-            for i in 0..4096 {
-                dry[i] =
-                    0.5 * (2.0 * PI * 440.0 * (block * 4096 + i) as f64 / 48000.0).sin() as f32;
+            for (i, d) in dry.iter_mut().enumerate() {
+                *d = 0.5 * (2.0 * PI * 440.0 * (block * 4096 + i) as f64 / 48000.0).sin() as f32;
             }
-            for i in 0..4096 {
-                out[i] = if block == 23 { 0.0 } else { dry[i] * 0.5 };
+            for (o, &d) in out.iter_mut().zip(&dry) {
+                *o = if block == 23 { 0.0 } else { d * 0.5 };
             }
             let mut right = out.clone();
             m.process(&dry, &dry, &mut out, &mut right, block >= 12);

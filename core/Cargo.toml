@@ -24,3 +24,6 @@ gethostname = "0.5"
 ureq = { version = "2", features = ["json"] }
 ed25519-dalek = "2"
 hmac = "0.12"
+
+[lints]
+workspace = true

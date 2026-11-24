@@ -33,7 +33,19 @@ fn effect_cases() -> Vec<(String, EffectSettings)> {
         for headroom in [true, false] {
             cases.push((
                 format!("full-{i}-headroom{headroom}"),
-                EffectSettings::full(0.8, hz, 6.0, headroom, 0.6, air, band, bass_air, 0.5, true),
+                EffectSettings {
+                    exciter: 0.8,
+                    exciter_hz: hz,
+                    bass_db: 6.0,
+                    headroom,
+                    even: 0.6,
+                    air_hz: air,
+                    bass_band_hz: band,
+                    bass_air_hz: bass_air,
+                    crystal: 0.5,
+                    dither: true,
+                }
+                .snapped(),
             ));
         }
     }
