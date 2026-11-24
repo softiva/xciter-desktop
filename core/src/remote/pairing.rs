@@ -51,7 +51,10 @@ impl Remote {
         };
         let ((ip, port), print) = match first_look(&found) {
             Ok(seen) => seen,
-            Err(message) => return fail(self, &message),
+            Err(RemoteError::NoSecureConnection) => {
+                return fail(self, "Couldn't start a secure connection.")
+            }
+            Err(_) => return fail(self, &format!("Couldn't reach {}.", found.name)),
         };
         let mut random = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut random);
@@ -139,10 +142,10 @@ impl Remote {
 }
 
 /// The first look at a device has no certificate to compare with: it records the one it sees, at the
-/// first address that answers. `Err` is the message for the person.
-fn first_look(found: &Nearby) -> Result<((Ipv4Addr, u16), String), String> {
+/// first address that answers. Returns that address and the certificate's fingerprint.
+fn first_look(found: &Nearby) -> Result<((Ipv4Addr, u16), String), RemoteError> {
     let Some(look) = Client::new(None, Duration::from_secs(5)) else {
-        return Err("Couldn't start a secure connection.".into());
+        return Err(RemoteError::NoSecureConnection);
     };
     let reached = found.addresses.iter().copied().find(|(ip, port)| {
         look.agent
@@ -153,6 +156,6 @@ fn first_look(found: &Nearby) -> Result<((Ipv4Addr, u16), String), String> {
     });
     match (reached, look.seen()) {
         (Some(address), Some(print)) => Ok((address, print)),
-        _ => Err(format!("Couldn't reach {}.", found.name)),
+        _ => Err(RemoteError::NotReachable),
     }
 }
