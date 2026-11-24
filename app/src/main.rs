@@ -1,6 +1,9 @@
 // No console window on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod error;
+
+use error::CommandError;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -226,7 +229,10 @@ fn move_in_playlist(app: State<App>, id: String, from: usize, to: usize) {
 
 /// Reading a large collection takes a while, so it never runs on the window's own thread.
 #[tauri::command]
-async fn add_folder(window: tauri::Window, app: State<'_, App>) -> Result<Vec<Track>, String> {
+async fn add_folder(
+    window: tauri::Window,
+    app: State<'_, App>,
+) -> Result<Vec<Track>, CommandError> {
     let picked = window
         .dialog()
         .file()
@@ -237,7 +243,7 @@ async fn add_folder(window: tauri::Window, app: State<'_, App>) -> Result<Vec<Tr
     };
     let folder = picked
         .into_path()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| CommandError::FolderPath(e.to_string()))?
         .to_string_lossy()
         .to_string();
     let mut p = player(&app);
@@ -250,7 +256,7 @@ async fn add_folder(window: tauri::Window, app: State<'_, App>) -> Result<Vec<Tr
 }
 
 #[tauri::command]
-async fn remove_folder(app: State<'_, App>, folder: String) -> Result<Vec<Track>, String> {
+async fn remove_folder(app: State<'_, App>, folder: String) -> Result<Vec<Track>, CommandError> {
     let mut p = player(&app);
     p.library.remove_folder(&folder);
     p.library.refresh();
@@ -348,7 +354,7 @@ async fn license_activate(
     window: tauri::Window,
     app: State<'_, App>,
     key: String,
-) -> Result<Outcome, String> {
+) -> Result<Outcome, CommandError> {
     let outcome = app.license.activate(&key);
     follow_license(&app, Some(window.app_handle()));
     Ok(outcome)
@@ -361,14 +367,17 @@ async fn license_remove(
     app: State<'_, App>,
     key: Option<String>,
     target: String,
-) -> Result<Outcome, String> {
+) -> Result<Outcome, CommandError> {
     let outcome = app.license.remove(key.as_deref(), &target);
     follow_license(&app, Some(window.app_handle()));
     Ok(outcome)
 }
 
 #[tauri::command]
-async fn license_deactivate(window: tauri::Window, app: State<'_, App>) -> Result<Outcome, String> {
+async fn license_deactivate(
+    window: tauri::Window,
+    app: State<'_, App>,
+) -> Result<Outcome, CommandError> {
     let outcome = app.license.deactivate_this();
     follow_license(&app, Some(window.app_handle()));
     Ok(outcome)
@@ -376,14 +385,14 @@ async fn license_deactivate(window: tauri::Window, app: State<'_, App>) -> Resul
 
 /// "Check again", for a license that ran out while offline.
 #[tauri::command]
-async fn license_check(window: tauri::Window, app: State<'_, App>) -> Result<View, String> {
+async fn license_check(window: tauri::Window, app: State<'_, App>) -> Result<View, CommandError> {
     let view = app.license.check_in();
     follow_license(&app, Some(window.app_handle()));
     Ok(view)
 }
 
 #[tauri::command]
-async fn art(app: State<'_, App>, id: String, size: u32) -> Result<Option<String>, String> {
+async fn art(app: State<'_, App>, id: String, size: u32) -> Result<Option<String>, CommandError> {
     let key = format!("{id}@{size}");
     if let Some(known) = lock(&app.art).get(&key) {
         return Ok(known.clone());

@@ -32,6 +32,25 @@ const SERVICE: &str = "_xciter._tcp.local.";
 /// How much of other devices' music is kept here between runs, oldest first out.
 const CACHE_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 
+/// Why a request to a paired device failed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum RemoteError {
+    #[error("the device is not paired with this computer")]
+    NotPaired,
+    #[error("no secure connection could be set up")]
+    NoSecureConnection,
+    #[error("the device could not be reached")]
+    NotReachable,
+    /// The other device removed this one; it has been forgotten here too.
+    #[error("the device no longer allows this computer")]
+    Unpaired,
+    #[error("the request failed")]
+    Request(#[source] Box<ureq::Error>),
+    #[error("the answer could not be read")]
+    Read(#[from] std::io::Error),
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -539,24 +558,23 @@ impl Remote {
     }
 
     /// A request to a paired device, with its token.
-    fn get(&self, id: &str, path: &str) -> Result<Vec<u8>, String> {
+    fn get(&self, id: &str, path: &str) -> Result<Vec<u8>, RemoteError> {
         let mut body = Vec::new();
         self.open(id, path)?
             .into_reader()
             .take(256 * 1024 * 1024)
-            .read_to_end(&mut body)
-            .map_err(|e| e.to_string())?;
+            .read_to_end(&mut body)?;
         Ok(body)
     }
 
-    fn open(&self, id: &str, path: &str) -> Result<ureq::Response, String> {
-        let host = self.host_of(id).ok_or("not paired")?;
+    fn open(&self, id: &str, path: &str) -> Result<ureq::Response, RemoteError> {
+        let host = self.host_of(id).ok_or(RemoteError::NotPaired)?;
         let client = Client::new(Some(host.fingerprint.clone()), Duration::from_secs(60))
-            .ok_or("no secure connection")?;
+            .ok_or(RemoteError::NoSecureConnection)?;
         let known = lock(&self.state).address.get(id).copied();
         let (ip, port) = match known {
             Some(found) => found,
-            None => self.reach(id, &client).ok_or("not reachable")?,
+            None => self.reach(id, &client).ok_or(RemoteError::NotReachable)?,
         };
         match client
             .agent
@@ -567,11 +585,11 @@ impl Remote {
             Ok(response) => Ok(response),
             Err(ureq::Error::Status(401, _)) => {
                 self.forget(id);
-                Err("unpaired".into())
+                Err(RemoteError::Unpaired)
             } // the other device removed this one
             Err(error) => {
                 lock(&self.state).address.remove(id);
-                Err(error.to_string())
+                Err(RemoteError::Request(Box::new(error)))
             }
         }
     }

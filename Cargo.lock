@@ -5991,11 +5991,13 @@ name = "xciter"
 version = "0.1.0"
 dependencies = [
  "gethostname",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "thiserror 2.0.21",
  "xciter-core",
 ]
 
@@ -6021,6 +6023,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "symphonia",
+ "thiserror 2.0.21",
  "ureq",
 ]
 

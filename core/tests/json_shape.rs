@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use xciter_core::library::{Playlist, ReplayGain, Track};
-use xciter_core::license::{Device, Http, License, LicenseConfig, Outcome, STAGE_PUBLIC_KEY};
+use xciter_core::license::{
+    Device, Http, HttpError, License, LicenseConfig, Outcome, STAGE_PUBLIC_KEY,
+};
 use xciter_core::player::{Repeat, State};
 use xciter_core::remote::Remote;
 use xciter_core::sound::{Sound, PROFILES};
@@ -84,14 +86,14 @@ fn player_state_json_is_unchanged() {
 
 struct Offline;
 impl Http for Offline {
-    fn post(&self, _: &str, _: &[(&str, String)], _: &[u8]) -> Result<(u16, Value), String> {
-        Err("offline".into())
+    fn post(&self, _: &str, _: &[(&str, String)], _: &[u8]) -> Result<(u16, Value), HttpError> {
+        Err(HttpError::Unreachable("offline".into()))
     }
 }
 
 struct ServerError;
 impl Http for ServerError {
-    fn post(&self, _: &str, _: &[(&str, String)], _: &[u8]) -> Result<(u16, Value), String> {
+    fn post(&self, _: &str, _: &[(&str, String)], _: &[u8]) -> Result<(u16, Value), HttpError> {
         Ok((
             500,
             json!({ "error": "server", "message": "Something went wrong. Try again." }),

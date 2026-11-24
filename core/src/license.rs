@@ -208,6 +208,16 @@ pub fn network_allowed(needs_pro: bool, pro: bool) -> bool {
 
 // ---- talking to the server ----------------------------------------------------------------------------
 
+/// Why a call to the license server got no answer at all. Any answer the server gives, even an error
+/// status, is not an `HttpError`: it is returned as `Ok((status, json))`.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum HttpError {
+    /// No connection, a timeout, or a TLS failure: the server could not be reached.
+    #[error("the license server could not be reached: {0}")]
+    Unreachable(String),
+}
+
 /// One HTTPS call: the JSON bytes to send (exactly these, since a signature covers them) and any extra headers.
 /// `Ok((status, json))` for any answer the server gave, `Err` when it could not be reached.
 pub trait Http: Send + Sync {
@@ -216,7 +226,7 @@ pub trait Http: Send + Sync {
         url: &str,
         headers: &[(&str, String)],
         body: &[u8],
-    ) -> Result<(u16, Value), String>;
+    ) -> Result<(u16, Value), HttpError>;
 }
 
 pub struct UreqHttp;
@@ -227,7 +237,7 @@ impl Http for UreqHttp {
         url: &str,
         headers: &[(&str, String)],
         body: &[u8],
-    ) -> Result<(u16, Value), String> {
+    ) -> Result<(u16, Value), HttpError> {
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(15))
             .build();
@@ -243,7 +253,7 @@ impl Http for UreqHttp {
             Err(ureq::Error::Status(status, response)) => {
                 Ok((status, response.into_json().unwrap_or(Value::Null)))
             }
-            Err(other) => Err(other.to_string()),
+            Err(other) => Err(HttpError::Unreachable(other.to_string())),
         }
     }
 }
@@ -892,7 +902,7 @@ mod tests {
                 url: &str,
                 headers: &[(&str, String)],
                 body: &[u8],
-            ) -> Result<(u16, Value), String> {
+            ) -> Result<(u16, Value), HttpError> {
                 let header = headers
                     .iter()
                     .find(|(n, _)| *n == "x-xciter-signature")
@@ -1040,7 +1050,7 @@ mod tests {
             url: &str,
             headers: &[(&str, String)],
             bytes: &[u8],
-        ) -> Result<(u16, Value), String> {
+        ) -> Result<(u16, Value), HttpError> {
             let body: Value = serde_json::from_slice(bytes).unwrap();
             let body = &body;
             if let Some(secret) = lock(&self.desktop_key).clone() {
@@ -1065,7 +1075,7 @@ mod tests {
                 }
             }
             if !*lock(&self.online) {
-                return Err("no route".into());
+                return Err(HttpError::Unreachable("no route".into()));
             }
             let path = url
                 .rsplit_once("/api")
@@ -1432,7 +1442,7 @@ mod tests {
                 _: &str,
                 _: &[(&str, String)],
                 _: &[u8],
-            ) -> Result<(u16, Value), String> {
+            ) -> Result<(u16, Value), HttpError> {
                 Ok((
                     500,
                     json!({ "error": "server", "message": "Something went wrong. Try again." }),
