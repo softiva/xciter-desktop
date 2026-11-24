@@ -58,7 +58,7 @@ jobs:
           $config = Join-Path $env:RUNNER_TEMP 'signing.json'
           @{ bundle = @{ windows = @{ certificateThumbprint = $env:THUMBPRINT } } } | ConvertTo-Json -Depth 4 | Set-Content $config
           Set-Location app
-          npx --no-install tauri build --bundles $bundles --config $config
+          npx --no-install tauri build --bundles $bundles --config $config '--' --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Check the signatures

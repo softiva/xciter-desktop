@@ -75,14 +75,16 @@ jobs:
           export APPLE_API_KEY_PATH
           trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
           (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" >"$APPLE_API_KEY_PATH")
-          cd app && ../node_modules/.bin/tauri build --target universal-apple-darwin --bundles app,dmg
+          cd app && ../node_modules/.bin/tauri build --target universal-apple-darwin --bundles app,dmg -- --locked
 
       - name: Check the signature, notarisation and architectures
         run: |
           app="$BUNDLE/macos/Xciter.app"
           dmg=$(ls "$BUNDLE"/dmg/*.dmg)
           codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -dv --verbose=2 "$app" 2>&1 | grep -E 'Authority=Developer ID Application|flags=.*runtime'
+          details=$(codesign -dv --verbose=2 "$app" 2>&1)
+          grep -q 'Authority=Developer ID Application' <<<"$details" || { echo "::error::not signed with a Developer ID Application certificate"; exit 1; }
+          grep -q 'flags=.*runtime' <<<"$details" || { echo "::error::hardened runtime is off"; exit 1; }
           spctl --assess --type execute --verbose=4 "$app"
           xcrun stapler validate "$app"
           codesign --verify --verbose=2 "$dmg"

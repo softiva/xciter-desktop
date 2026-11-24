@@ -62,7 +62,7 @@ jobs:
           XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
         run: |
           Set-Location app
-          npx --no-install tauri build --no-bundle
+          npx --no-install tauri build --no-bundle '--' --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Stage the package
@@ -77,11 +77,12 @@ jobs:
           Copy-Item target/release/xciter.exe $stage/
           foreach ($icon in 'StoreLogo.png', 'Square44x44Logo.png', 'Square150x150Logo.png') { Copy-Item "app/icons/$icon" "$stage/Assets/" }
           $escape = { param($text) [Security.SecurityElement]::Escape($text) }
-          (Get-Content packaging/msstore/Package.appxmanifest -Raw) `
-            -replace '@IDENTITY_NAME@', (& $escape $env:MSIX_IDENTITY_NAME) `
-            -replace '@PUBLISHER@', (& $escape $env:MSIX_PUBLISHER) `
-            -replace '@PUBLISHER_DISPLAY_NAME@', (& $escape $env:MSIX_PUBLISHER_DISPLAY_NAME) `
-            -replace '@VERSION@', $env:MSIX_VERSION |
+          # String.Replace is literal, unlike -replace, so a "$" in a value is kept as is.
+          (Get-Content packaging/msstore/Package.appxmanifest -Raw).
+            Replace('@IDENTITY_NAME@', (& $escape $env:MSIX_IDENTITY_NAME)).
+            Replace('@PUBLISHER_DISPLAY_NAME@', (& $escape $env:MSIX_PUBLISHER_DISPLAY_NAME)).
+            Replace('@PUBLISHER@', (& $escape $env:MSIX_PUBLISHER)).
+            Replace('@VERSION@', $env:MSIX_VERSION) |
             Set-Content "$stage/Package.appxmanifest" -Encoding utf8
           if (Select-String -Path "$stage/Package.appxmanifest" -Pattern '@[A-Z_]+@') { Write-Output "::error::unfilled token in the manifest"; exit 1 }
           [xml](Get-Content "$stage/Package.appxmanifest" -Raw) | Out-Null

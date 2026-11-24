@@ -45,7 +45,7 @@ jobs:
           XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
         run: |
           if [ -z "$XCITER_DESKTOP_KEY" ]; then echo "::error::The XCITER_DESKTOP_KEY secret is not set"; exit 1; fi
-          cd app && ../node_modules/.bin/tauri build --bundles rpm
+          cd app && ../node_modules/.bin/tauri build --bundles rpm -- --locked
 
       - name: Check the package
         env:

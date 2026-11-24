@@ -46,7 +46,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           if [ -z "$XCITER_DESKTOP_KEY" ]; then echo "::error::The XCITER_DESKTOP_KEY secret is not set"; exit 1; fi
-          cd app && ../node_modules/.bin/tauri build --bundles appimage
+          cd app && ../node_modules/.bin/tauri build --bundles appimage -- --locked
 
       - name: Check the AppImage
         env:
