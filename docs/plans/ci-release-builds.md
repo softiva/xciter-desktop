@@ -122,11 +122,11 @@ Spec: [`docs/specs/ci-release-builds.md`](../specs/ci-release-builds.md). Writte
 ## Progress log
 | Phase | Status | Notes |
 |---|---|---|
-| 1 | ☐ | |
-| 2 | ☐ | |
-| 3 | ☐ | |
-| 4 | ☐ | |
-| 5 | ☐ | |
-| 6 | ☐ | |
-| 7 | ☐ | |
-| 8 | ☐ | Needs the secrets set up |
+| 1 | ✅ | Scripts and their tests (21 cases). `setup-build`, `_gate.yml`, `_version.yml`. **Change from the plan:** `release.yml` creates the draft on tag push and `release-upload` only waits for it, because parallel `gh release create` can make duplicate drafts (GitHub allows several drafts per tag). Actions pinned to SHAs of releases at least 14 days old. |
+| 2 | ✅ | deb, rpm and AppImage workflows; `rpm` target and `alsa-lib` dependency added to `tauri.conf.json`. |
+| 3 | ✅ | `packaging/arch/PKGBUILD` (repackages the .deb), makepkg, namcap and install test in Arch containers. |
+| 4 | ✅ | Universal macOS build on macos-15. The bundle layout (`Xciter.app/Contents/MacOS/xciter`) was confirmed with a local debug bundle. |
+| 5 | ✅ | `sign-windows` composite (.pfx → thumbprint). Windows runs the CLI through `npx --no-install`, because PowerShell can't run the `.bin` shell shim. |
+| 6 | ✅ | `packaging/msstore/Package.appxmanifest`; winapp v0.8.0 via `microsoft/setup-WinAppCli` v0.3.0; msstore v0.4.4 via `microsoft/microsoft-store-apppublisher` v1.4. **From the docs:** the first Store submission must be made by hand, and CI updates work for free products only (Xciter is free in the Store). |
+| 7 | ✅ | `checksums.yml` (on publish), `docs/release.md` (procedure and every secret and variable), README downloads. |
+| 8 | ☐ blocked | Needs the secrets and variables in `docs/release.md`. **Set them before merging**, because every push to `main` runs all seven builds and they fail without `XCITER_DESKTOP_KEY` and the signing secrets. `workflow_dispatch` only works once the workflows are on `main`. |
