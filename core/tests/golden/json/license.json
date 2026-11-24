@@ -1,0 +1,77 @@
+{
+  "activateIncomplete": {
+    "message": "Xciter could not reach the license server. Check your internet connection and try again.",
+    "offline": true,
+    "result": "failed"
+  },
+  "activateOffline": {
+    "message": "Xciter could not reach the license server. Check your internet connection and try again.",
+    "offline": true,
+    "result": "failed"
+  },
+  "activateServerError": {
+    "message": "Something went wrong. Try again.",
+    "offline": false,
+    "result": "failed"
+  },
+  "checkInNoKey": {
+    "checked": 0,
+    "deviceName": "Test Mac",
+    "devices": [],
+    "expired": false,
+    "key": null,
+    "limit": 4,
+    "masked": null,
+    "platform": "macos",
+    "pro": false
+  },
+  "deactivateNoKey": {
+    "message": "There is no license key on this computer.",
+    "offline": false,
+    "result": "failed"
+  },
+  "deviceLimit": {
+    "devices": [
+      {
+        "id": "d1",
+        "lastSeen": 1700000000,
+        "name": "Laptop",
+        "platform": "windows",
+        "thisDevice": false
+      }
+    ],
+    "key": "XCIT-KEY",
+    "limit": 4,
+    "result": "deviceLimit"
+  },
+  "devices": {
+    "devices": [
+      {
+        "id": "d1",
+        "lastSeen": 1700000000,
+        "name": "Laptop",
+        "platform": "windows",
+        "thisDevice": false
+      }
+    ],
+    "key": "XCIT-KEY",
+    "limit": 4,
+    "result": "devices"
+  },
+  "removeOffline": {
+    "message": "Xciter could not reach the license server. Check your internet connection and try again.",
+    "offline": true,
+    "result": "failed"
+  },
+  "view": {
+    "checked": 0,
+    "deviceName": "Test Mac",
+    "devices": [],
+    "expired": false,
+    "key": null,
+    "limit": 4,
+    "masked": null,
+    "platform": "macos",
+    "pro": false
+  }
+}

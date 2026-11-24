@@ -1,0 +1,68 @@
+{
+  "playlist": {
+    "id": "p1",
+    "name": "Mix",
+    "songs": [
+      "a",
+      "b"
+    ]
+  },
+  "repeat": [
+    "off",
+    "one",
+    "all"
+  ],
+  "state": {
+    "current": {
+      "added": 1700000000,
+      "album": "Album",
+      "album_artist": "Album Artist",
+      "artist": "Artist",
+      "disc_number": 1,
+      "duration": 201.5,
+      "folder": "/music/Album",
+      "gain": {
+        "album_gain": null,
+        "album_peak": null,
+        "track_gain": -6.5,
+        "track_peak": 0.9800000190734863
+      },
+      "id": "a",
+      "kind": "flac",
+      "sample_rate": 44100,
+      "title": "Song",
+      "track_number": 3
+    },
+    "device": "Speakers",
+    "duration": 201.5,
+    "failed": false,
+    "fetching": null,
+    "index": 0,
+    "playing": true,
+    "repeat": "all",
+    "seconds": 12.25,
+    "shuffle": false,
+    "up_next": [
+      {
+        "added": 1700000000,
+        "album": "Album",
+        "album_artist": "Album Artist",
+        "artist": "Artist",
+        "disc_number": 1,
+        "duration": 201.5,
+        "folder": "/music/Album",
+        "gain": {
+          "album_gain": null,
+          "album_peak": null,
+          "track_gain": -6.5,
+          "track_peak": 0.9800000190734863
+        },
+        "id": "b",
+        "kind": "flac",
+        "sample_rate": 44100,
+        "title": "Song",
+        "track_number": 3
+      }
+    ]
+  }
+}

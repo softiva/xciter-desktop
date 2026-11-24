@@ -532,3 +532,23 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("Xciter could not start");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constants_json_is_unchanged() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/constants.json");
+        let actual = serde_json::to_string_pretty(&constants()).expect("serialisable") + "\n";
+        if std::env::var_os("GOLDEN_RECORD").is_some() {
+            std::fs::create_dir_all(path.parent().expect("has a parent"))
+                .expect("create golden dir");
+            std::fs::write(&path, &actual).expect("write snapshot");
+        }
+        let expected =
+            std::fs::read_to_string(&path).expect("snapshot exists (record with GOLDEN_RECORD=1)");
+        assert_eq!(actual, expected, "the JSON from `constants` changed");
+    }
+}
