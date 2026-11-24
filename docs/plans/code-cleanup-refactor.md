@@ -159,10 +159,14 @@ app/src/           main.rs (builder and wiring only) · commands/{player,sound,l
 | 5 | ✅ | D2 approved: `thiserror` 2 (already in Cargo.lock). `license::HttpError`, `remote::RemoteError`, `app::CommandError` (same strings to the window). `deny.toml`; cargo-deny 0.21.0 (0.22 needs rustc 1.95). |
 | 6 | ✅ | `dsp/`, `license/`, `remote/`, `engine/`, `app/src/commands/` split; same 56 command names. `constants`/`share_state` typed. Long functions broken up in app setup, share, remote. |
 | 7 | ✅ | engine (Plan, fill), player (`Queue` extracted, 16 tests, saved format), share (code, identity, tokens). 95 → 144 tests. |
-| 8 | ✅ (except manual smoke test) | Every public `core` item documented; `#![warn(missing_docs)]`; `cargo doc -D warnings` clean. |
+| 8 | ✅ | Every public `core` item documented; `#![warn(missing_docs)]`; `cargo doc -D warnings` clean. |
 
 ### Left as is, with reasons
 - **Functions over 60 lines:** `engine::renderer::render_block` (121), `deck::refill` (78), `output::output_thread` (73), `deck::open` (69). These are the audio path and have no test harness that renders through the engine, so splitting them is a follow-up once one exists. `main` (67) lists the 56 commands. `dsp::effects::{new, process}` (61): a struct literal, and the per-sample hot path. `library::read` (70), `player::handle` (65), `share::start` (64), `run_pairing` (64): just over the limit and cohesive.
 - **`devices_state`** still returns `serde_json::Value`, because it is `remote::Remote::view()` (already snapshot-tested) plus a `locked` flag.
 - **RUSTSEC-2026-0592** (`url` 2.5.8, through tauri): fixed after `/check` with `cargo update -p url` (url 2.5.9, form_urlencoded 1.2.3). `cargo deny check` now passes.
-- **AC10 manual smoke test** has not been run (it needs a person at the app). See the checklist in Phase 8.
+- **AC10 smoke test:** desktop control was not available, so it was automated instead.
+  1. The real app (`target/debug/xciter`) launched, stayed up for 20 s with no panic, and quit cleanly.
+  2. `cargo run -p xciter-core --example smoke` drives the player through the real engine and speakers: add a folder, play, seek, skip, previous, meter, effects, EQ, preset, band, profile, Compare, pause, and the licence screen with no key. 17/17 PASS on this branch, and the same 17/17 on `main`.
+  3. Pairing and sharing between two instances over local TLS (remote/share tests): 10/10 PASS.
+  Not covered: looking at the window, listening, pairing with a second physical device, and the live licence server.
