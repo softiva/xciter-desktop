@@ -1,0 +1,25 @@
+# Maintainer: Softiva <hello@softiva.app>
+#
+# Repackages the .deb that CI builds (.github/workflows/build-pacman.yml), so Arch gets the same binary as
+# every other Linux package. CI puts xciter.deb and LICENSE next to this file, sets pkgver from the release
+# version (with "-" turned into "_", which pacman needs) and fills in the checksums before running makepkg.
+
+pkgname=xciter-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Music player with an exciter, virtual bass and 31-band equalizer"
+arch=('x86_64')
+url="https://softiva.app/xciter"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'alsa-lib' 'hicolor-icon-theme' 'glibc' 'gcc-libs')
+provides=('xciter')
+conflicts=('xciter')
+options=('!strip' '!debug')
+source=("xciter.deb" "LICENSE")
+noextract=("xciter.deb")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+    bsdtar -xOf "$srcdir/xciter.deb" 'data.tar.*' | bsdtar -xf - -C "$pkgdir"
+    install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
