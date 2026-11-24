@@ -9,20 +9,7 @@ pub struct Engine {
 
 impl Engine {
     pub fn start(events: Sender<Event>) -> Self {
-        let shared = Arc::new(Shared {
-            played: AtomicU64::new(0),
-            paused: AtomicBool::new(true),
-            flush: AtomicBool::new(false),
-            dither: AtomicBool::new(false),
-            rate: AtomicU32::new(0),
-            device_generation: AtomicU64::new(0),
-            meter: AtomicBool::new(false),
-            marks: Mutex::new(Vec::new()),
-            bars: Mutex::new(Vec::new()),
-            sound: Mutex::new(SoundSnapshot::default()),
-            device: Mutex::new("Speakers".into()),
-            last: Mutex::new(None),
-        });
+        let shared = Arc::new(Shared::new());
         let (producer, consumer) = RingBuffer::<f32>::new(RING_FRAMES * 2);
         let consumer = Arc::new(Mutex::new(consumer));
         let audio_shared = shared.clone();

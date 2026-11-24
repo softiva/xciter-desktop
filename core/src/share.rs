@@ -489,3 +489,92 @@ fn pair(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()>
             .as_bytes(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("xciter-share-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn shared_with(devices: Vec<PairedDevice>) -> Shared {
+        let mut identity = load_identity(&temp("unused").join("share.json")).unwrap();
+        identity.devices = devices;
+        Shared {
+            path: PathBuf::new(),
+            name: "Test".into(),
+            fingerprint: String::new(),
+            identity: Mutex::new(identity),
+            songs: Mutex::new(HashMap::new()),
+            waiting: Mutex::new(HashMap::new()),
+            on_request: Box::new(|_| {}),
+            enabled: AtomicBool::new(true),
+            allowed: AtomicBool::new(true),
+            port: AtomicU16::new(0),
+            library_version: AtomicU64::new(0),
+            mdns: Mutex::new(None),
+        }
+    }
+
+    fn bearer(token: &str) -> HashMap<String, String> {
+        HashMap::from([("authorization".to_string(), format!("Bearer {token}"))])
+    }
+
+    #[test]
+    fn the_pairing_code_is_six_digits_and_the_same_on_both_devices() {
+        let code = pairing_code("fingerprint", "nonce");
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(code, pairing_code("fingerprint", "nonce"));
+        assert_ne!(code, pairing_code("fingerprint", "other nonce"));
+    }
+
+    #[test]
+    fn a_saved_identity_is_read_back_unchanged() {
+        let path = temp("identity").join("share.json");
+        let made = load_identity(&path).unwrap();
+        fs::write(&path, serde_json::to_vec(&made).unwrap()).unwrap();
+        let read = load_identity(&path).unwrap();
+        assert_eq!(read.host_id, made.host_id);
+        assert_eq!(read.cert, made.cert);
+        assert!(read.enabled);
+    }
+
+    #[test]
+    fn an_unreadable_identity_file_is_replaced_by_a_new_identity() {
+        let path = temp("corrupt").join("share.json");
+        fs::write(&path, b"not json").unwrap();
+        let made = load_identity(&path).unwrap();
+        assert_eq!(made.host_id.len(), 16);
+        assert!(!made.cert.is_empty());
+        assert!(made.devices.is_empty());
+    }
+
+    #[test]
+    fn only_a_paired_device_token_is_accepted() {
+        let shared = shared_with(vec![PairedDevice {
+            id: "phone".into(),
+            name: "Phone".into(),
+            token_hash: sha(b"secret-token"),
+        }]);
+        assert!(is_paired(&shared, &bearer("secret-token")));
+        assert!(!is_paired(&shared, &bearer("wrong-token")));
+        assert!(!is_paired(&shared, &bearer("")));
+        assert!(!is_paired(&shared, &HashMap::new()));
+    }
+
+    #[test]
+    fn a_hashed_empty_token_never_matches() {
+        // Even if a device were stored with the hash of the empty token, no token is no access.
+        let shared = shared_with(vec![PairedDevice {
+            id: "odd".into(),
+            name: "Odd".into(),
+            token_hash: sha(b""),
+        }]);
+        assert!(!is_paired(&shared, &bearer("")));
+    }
+}

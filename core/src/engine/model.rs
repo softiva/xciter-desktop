@@ -109,3 +109,23 @@ pub(super) struct Shared {
     pub(super) device: Mutex<String>,
     pub(super) last: Mutex<Option<(String, f64)>>,
 }
+
+impl Shared {
+    /// Paused, with nothing played yet and no output device known.
+    pub(super) fn new() -> Self {
+        Self {
+            played: AtomicU64::new(0),
+            paused: AtomicBool::new(true),
+            flush: AtomicBool::new(false),
+            dither: AtomicBool::new(false),
+            rate: AtomicU32::new(0),
+            device_generation: AtomicU64::new(0),
+            meter: AtomicBool::new(false),
+            marks: Mutex::new(Vec::new()),
+            bars: Mutex::new(Vec::new()),
+            sound: Mutex::new(SoundSnapshot::default()),
+            device: Mutex::new("Speakers".into()),
+            last: Mutex::new(None),
+        }
+    }
+}

@@ -1,8 +1,11 @@
 //! The queue and the transport, shared by every screen.
+mod queue;
+
 use crate::engine::{Engine, Event, Item, Plan, SoundSnapshot};
 use crate::library::{Library, Track};
 use crate::remote::{is_remote, Remote};
 use crate::sound::Sound;
+use queue::Queue;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -10,9 +13,10 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Repeat {
+    #[default]
     Off,
     One,
     All,
@@ -56,17 +60,13 @@ pub struct Player {
     pub sound: Sound,
     /// Compare: hearing the original for a moment. Never saved.
     pub comparing: bool,
-    order: Vec<Track>,
-    original: Vec<Track>,
-    index: usize,
+    queue: Queue,
     history: std::collections::HashMap<String, (u32, u64)>,
     last_counted: Option<String>,
     playing: bool,
     prepared: bool,
     ended: bool,
     failed: bool,
-    shuffle: bool,
-    repeat: Repeat,
     seconds: f64,
     failures: usize,
 }
@@ -99,15 +99,11 @@ impl Player {
             waiting: None,
             library,
             sound,
-            order: vec![],
-            original: vec![],
-            index: 0,
+            queue: Queue::default(),
             playing: false,
             prepared: false,
             ended: false,
             failed: false,
-            shuffle: false,
-            repeat: Repeat::Off,
             seconds: 0.0,
             failures: 0,
         };
@@ -122,7 +118,7 @@ impl Player {
     }
 
     pub fn current(&self) -> Option<&Track> {
-        self.order.get(self.index)
+        self.queue.current()
     }
 
     /// Connects the music of other devices; their songs can then be queued and played like local ones.
@@ -161,9 +157,10 @@ impl Player {
     fn prefetch(&self) {
         let Some(remote) = &self.remote else { return };
         let ids: Vec<String> = self
+            .queue
             .order
             .iter()
-            .skip(self.index)
+            .skip(self.queue.index)
             .take(4)
             .filter(|t| is_remote(&t.id))
             .map(|t| t.id.clone())
@@ -193,18 +190,12 @@ impl Player {
                         .map(|r| r.host_name(host))
                         .unwrap_or_default()
                 }),
-            up_next: self
-                .order
-                .iter()
-                .skip(self.index + 1)
-                .take(50)
-                .cloned()
-                .collect(),
+            up_next: self.queue.up_next().take(50).cloned().collect(),
             current,
-            index: self.index,
+            index: self.queue.index,
             playing: self.playing,
-            shuffle: self.shuffle,
-            repeat: self.repeat,
+            shuffle: self.queue.shuffle,
+            repeat: self.queue.repeat,
             seconds: self.seconds,
             duration,
             failed: self.failed,
@@ -240,6 +231,7 @@ impl Player {
     fn plan(&self) -> Plan {
         Plan {
             items: self
+                .queue
                 .order
                 .iter()
                 .map(|t| Item {
@@ -253,8 +245,8 @@ impl Player {
                     gain: t.gain.clone(),
                 })
                 .collect(),
-            repeat_one: self.repeat == Repeat::One,
-            repeat_all: self.repeat == Repeat::All,
+            repeat_one: self.queue.repeat == Repeat::One,
+            repeat_all: self.queue.repeat == Repeat::All,
         }
     }
 
@@ -278,7 +270,7 @@ impl Player {
             return;
         }
         self.engine
-            .start_plan(self.plan(), self.index, seconds, playing);
+            .start_plan(self.plan(), self.queue.index, seconds, playing);
         self.save();
     }
 
@@ -287,20 +279,8 @@ impl Player {
     }
 
     pub fn play(&mut self, tracks: Vec<Track>, position: usize) {
-        if position >= tracks.len() {
+        if !self.queue.set(tracks, position) {
             return;
-        }
-        self.original = tracks.clone();
-        if self.shuffle {
-            let mut rest = tracks;
-            let first = rest.remove(position);
-            rest.shuffle(&mut rand::thread_rng());
-            rest.insert(0, first);
-            self.order = rest;
-            self.index = 0;
-        } else {
-            self.order = tracks;
-            self.index = position;
         }
         self.failures = 0;
         self.start(0.0, true);
@@ -310,20 +290,19 @@ impl Player {
         if tracks.is_empty() {
             return;
         }
-        self.shuffle = false;
+        self.queue.shuffle = false;
         tracks.shuffle(&mut rand::thread_rng());
         self.play(tracks, 0);
     }
 
     pub fn jump(&mut self, id: &str) {
-        if let Some(found) = self.order.iter().position(|t| t.id == id) {
-            self.index = found;
+        if self.queue.go_to(id) {
             self.start(0.0, true);
         }
     }
 
     pub fn toggle(&mut self) {
-        if self.order.is_empty() {
+        if self.queue.order.is_empty() {
             let all = self.library.songs.clone();
             self.shuffled(all);
             return;
@@ -336,7 +315,7 @@ impl Player {
     }
 
     pub fn resume(&mut self) {
-        if self.order.is_empty() {
+        if self.queue.order.is_empty() {
             return;
         }
         if self.waiting.is_some() {
@@ -369,14 +348,7 @@ impl Player {
     }
 
     pub fn next(&mut self) {
-        if self.order.is_empty() {
-            return;
-        }
-        if self.index + 1 < self.order.len() {
-            self.index += 1;
-        } else if self.repeat == Repeat::All {
-            self.index = 0;
-        } else {
+        if !self.queue.advance() {
             return;
         }
         let playing = self.playing || self.ended;
@@ -393,21 +365,21 @@ impl Player {
     }
 
     pub fn previous(&mut self) {
-        if self.order.is_empty() {
+        if self.queue.order.is_empty() {
             return;
         }
         let at = self.state().seconds;
-        if at > 3.0 || self.index == 0 {
+        if at > 3.0 || self.queue.index == 0 {
             self.seek(0.0);
             return;
         }
-        self.index -= 1;
+        self.queue.index -= 1;
         let playing = self.playing;
         self.start(0.0, playing);
     }
 
     pub fn seek(&mut self, seconds: f64) {
-        if self.order.is_empty() {
+        if self.queue.order.is_empty() {
             return;
         }
         self.seconds = seconds;
@@ -418,35 +390,13 @@ impl Player {
     }
 
     pub fn toggle_shuffle(&mut self) {
-        self.shuffle = !self.shuffle;
-        let Some(now) = self.current().cloned() else {
-            return;
-        };
-        if self.shuffle {
-            self.original = self.order.clone();
-            let mut rest: Vec<Track> = self
-                .order
-                .iter()
-                .filter(|t| t.id != now.id)
-                .cloned()
-                .collect();
-            rest.shuffle(&mut rand::thread_rng());
-            rest.insert(0, now);
-            self.order = rest;
-            self.index = 0;
-        } else {
-            self.order = self.original.clone();
-            self.index = self.order.iter().position(|t| t.id == now.id).unwrap_or(0);
+        if self.queue.toggle_shuffle() {
+            self.push_plan();
         }
-        self.push_plan();
     }
 
     pub fn cycle_repeat(&mut self) {
-        self.repeat = match self.repeat {
-            Repeat::Off => Repeat::One,
-            Repeat::One => Repeat::All,
-            Repeat::All => Repeat::Off,
-        };
+        self.queue.cycle_repeat();
         self.push_plan();
     }
 
@@ -457,26 +407,6 @@ impl Player {
         self.save();
     }
 
-    fn detach(&mut self, id: &str) {
-        if let Some(found) = self.order.iter().position(|t| t.id == id) {
-            self.order.remove(found);
-            if found < self.index {
-                self.index -= 1;
-            }
-        }
-    }
-
-    fn queue_changed(&mut self, track: Option<Track>) {
-        if !self.shuffle {
-            self.original = self.order.clone();
-        } else if let Some(track) = track {
-            if !self.original.iter().any(|t| t.id == track.id) {
-                self.original.push(track);
-            }
-        }
-        self.push_plan();
-    }
-
     pub fn play_next(&mut self, track: Track) {
         let Some(now) = self.current() else {
             self.play(vec![track], 0);
@@ -485,9 +415,8 @@ impl Player {
         if now.id == track.id {
             return;
         }
-        self.detach(&track.id);
-        self.order.insert(self.index + 1, track.clone());
-        self.queue_changed(Some(track));
+        self.queue.insert_next(track);
+        self.push_plan();
     }
 
     pub fn add_to_queue(&mut self, track: Track) {
@@ -498,34 +427,27 @@ impl Player {
         if now.id == track.id {
             return;
         }
-        self.detach(&track.id);
-        self.order.push(track.clone());
-        self.queue_changed(Some(track));
+        self.queue.append(track);
+        self.push_plan();
     }
 
     /// Moves an Up next row; both positions count from the first song after the current one.
     pub fn move_up_next(&mut self, from: usize, to: usize) {
-        let (from, to) = (self.index + 1 + from, self.index + 1 + to);
-        if from >= self.order.len() || to >= self.order.len() {
-            return;
+        if self.queue.move_up_next(from, to) {
+            self.push_plan();
         }
-        let track = self.order.remove(from);
-        self.order.insert(to, track);
-        self.queue_changed(None);
     }
 
     pub fn remove_up_next(&mut self, id: &str) {
-        self.original.retain(|t| t.id != id);
-        self.detach(id);
-        self.queue_changed(None);
+        self.queue.remove(id);
+        self.push_plan();
     }
 
     /// Applies what the engine reports. True when the screens should refresh.
     pub fn handle(&mut self, event: Event) -> bool {
         match event {
             Event::Track(id) => {
-                if let Some(found) = self.order.iter().position(|t| t.id == id) {
-                    self.index = found;
+                if self.queue.go_to(&id) {
                     self.failures = 0;
                     self.save();
                 }
@@ -569,9 +491,7 @@ impl Player {
             }
             Event::Failed(id) if is_remote(&id) && !self.ready(&id) => {
                 // The queue reached a song from another device before its copy did.
-                if let Some(found) = self.order.iter().position(|t| t.id == id) {
-                    self.index = found;
-                }
+                self.queue.go_to(&id);
                 self.waiting = Some(id.clone());
                 self.engine.pause();
                 if let Some(remote) = &self.remote {
@@ -580,9 +500,7 @@ impl Player {
                 true
             }
             Event::Failed(id) => {
-                if let Some(found) = self.order.iter().position(|t| t.id == id) {
-                    self.index = found;
-                }
+                self.queue.go_to(&id);
                 self.failed = true;
                 self.failures += 1;
                 self.playing = false;
@@ -600,9 +518,10 @@ impl Player {
     /// What to offer after the queue: more by the artist playing now, then favourites, then anything.
     pub fn suggestions(&self) -> Vec<Track> {
         let queued: std::collections::HashSet<&str> = self
+            .queue
             .order
             .iter()
-            .skip(self.index)
+            .skip(self.queue.index)
             .map(|t| t.id.as_str())
             .collect();
         let artist = self.current().map(|t| t.artist.to_lowercase());
@@ -629,12 +548,12 @@ impl Player {
 
     fn save(&self) {
         let saved = Saved {
-            ids: self.order.iter().map(|t| t.id.clone()).collect(),
-            original: self.original.iter().map(|t| t.id.clone()).collect(),
-            index: self.index,
+            ids: self.queue.order.iter().map(|t| t.id.clone()).collect(),
+            original: self.queue.original.iter().map(|t| t.id.clone()).collect(),
+            index: self.queue.index,
             seconds: self.seconds,
-            shuffle: self.shuffle,
-            repeat: Some(self.repeat),
+            shuffle: self.queue.shuffle,
+            repeat: Some(self.queue.repeat),
         };
         if let Ok(data) = serde_json::to_vec(&saved) {
             let _ = fs::write(self.dir.join("queue.json"), data);
@@ -648,18 +567,54 @@ impl Player {
         else {
             return;
         };
-        self.order = self.tracks_of(&saved.ids);
-        self.original = self.tracks_of(&saved.original);
-        if self.order.is_empty() {
+        self.queue.order = self.tracks_of(&saved.ids);
+        self.queue.original = self.tracks_of(&saved.original);
+        if self.queue.order.is_empty() {
             return;
         }
-        self.index = saved
+        self.queue.index = saved
             .ids
             .get(saved.index)
-            .and_then(|id| self.order.iter().position(|t| &t.id == id))
+            .and_then(|id| self.queue.order.iter().position(|t| &t.id == id))
             .unwrap_or(0);
         self.seconds = saved.seconds;
-        self.shuffle = saved.shuffle;
-        self.repeat = saved.repeat.unwrap_or(Repeat::Off);
+        self.queue.shuffle = saved.shuffle;
+        self.queue.repeat = saved.repeat.unwrap_or(Repeat::Off);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_queue_reads_back() {
+        let saved = Saved {
+            ids: vec!["a".into(), "b".into()],
+            original: vec!["b".into(), "a".into()],
+            index: 1,
+            seconds: 12.5,
+            shuffle: true,
+            repeat: Some(Repeat::All),
+        };
+        let read: Saved = serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(read.ids, saved.ids);
+        assert_eq!(read.original, saved.original);
+        assert_eq!(read.index, 1);
+        assert_eq!(read.seconds, 12.5);
+        assert!(read.shuffle);
+        assert_eq!(read.repeat, Some(Repeat::All));
+    }
+
+    #[test]
+    fn a_queue_saved_before_repeat_existed_still_reads() {
+        let old = br#"{"ids":["a"],"original":["a"],"index":0,"seconds":0.0,"shuffle":false}"#;
+        let read: Saved = serde_json::from_slice(old).unwrap();
+        assert_eq!(read.repeat, None);
+    }
+
+    #[test]
+    fn repeat_is_saved_in_lowercase() {
+        assert_eq!(serde_json::to_string(&Repeat::One).unwrap(), "\"one\"");
     }
 }

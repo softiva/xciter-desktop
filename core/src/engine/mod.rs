@@ -40,3 +40,6 @@ use renderer::*;
 
 pub use handle::*;
 pub use model::*;
+
+#[cfg(test)]
+mod tests;
