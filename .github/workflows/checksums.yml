@@ -1,0 +1,41 @@
+# Adds SHA256SUMS to a release when a maintainer publishes it: that is the moment its set of files is final
+# (every build-*.yml has uploaded into the draft). Re-publishing or re-running regenerates it.
+name: Release checksums
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checksums-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checksums:
+    name: SHA256SUMS
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Download, hash and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir assets && cd assets
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" --skip-existing
+          rm -f SHA256SUMS
+          files=$(ls)
+          if [ -z "$files" ]; then echo "::error::the release has no files"; exit 1; fi
+          sha256sum -- * > ../SHA256SUMS
+          cat ../SHA256SUMS
+          sha256sum -c ../SHA256SUMS
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" ../SHA256SUMS --clobber
