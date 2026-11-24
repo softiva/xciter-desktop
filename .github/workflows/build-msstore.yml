@@ -1,0 +1,164 @@
+# Microsoft Store package (.msix), x64: the release xciter.exe with packaging/msstore/Package.appxmanifest,
+# packed with Microsoft's winapp CLI and left unsigned (the Store signs it after certification).
+# On main it is built and checked only. On a stable release tag (never a pre-release) it is submitted to
+# Partner Center with the Microsoft Store CLI; certification then takes its own time, CI does not wait.
+# The very first Store submission must be made by hand in Partner Center; the CLI can only update.
+name: Microsoft Store
+
+on:
+  push:
+    branches: [main]
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  gate:
+    uses: ./.github/workflows/_gate.yml
+
+  version:
+    uses: ./.github/workflows/_version.yml
+
+  build:
+    name: Build the MSIX
+    needs: [gate, version]
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the settings are set
+        env:
+          XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $missing = 0
+          foreach ($name in 'XCITER_DESKTOP_KEY', 'MSIX_IDENTITY_NAME', 'MSIX_PUBLISHER', 'MSIX_PUBLISHER_DISPLAY_NAME') {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { Write-Output "::error::$name is not set (see docs/release.md)"; $missing = 1 }
+          }
+          if ($env:MSIX_PUBLISHER -and -not $env:MSIX_PUBLISHER.StartsWith('CN=')) { Write-Output "::error::MSIX_PUBLISHER must start with CN= (copy it from Partner Center)"; $missing = 1 }
+          exit $missing
+
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-key: windows-release
+
+      - name: Build xciter.exe
+        env:
+          XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
+        run: |
+          Set-Location app
+          npx --no-install tauri build --no-bundle
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Stage the package
+        env:
+          MSIX_VERSION: ${{ needs.version.outputs.msix }}
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $stage = 'msix-stage'
+          New-Item -ItemType Directory "$stage/Assets" -Force | Out-Null
+          Copy-Item target/release/xciter.exe $stage/
+          foreach ($icon in 'StoreLogo.png', 'Square44x44Logo.png', 'Square150x150Logo.png') { Copy-Item "app/icons/$icon" "$stage/Assets/" }
+          $escape = { param($text) [Security.SecurityElement]::Escape($text) }
+          (Get-Content packaging/msstore/Package.appxmanifest -Raw) `
+            -replace '@IDENTITY_NAME@', (& $escape $env:MSIX_IDENTITY_NAME) `
+            -replace '@PUBLISHER@', (& $escape $env:MSIX_PUBLISHER) `
+            -replace '@PUBLISHER_DISPLAY_NAME@', (& $escape $env:MSIX_PUBLISHER_DISPLAY_NAME) `
+            -replace '@VERSION@', $env:MSIX_VERSION |
+            Set-Content "$stage/Package.appxmanifest" -Encoding utf8
+          if (Select-String -Path "$stage/Package.appxmanifest" -Pattern '@[A-Z_]+@') { Write-Output "::error::unfilled token in the manifest"; exit 1 }
+          [xml](Get-Content "$stage/Package.appxmanifest" -Raw) | Out-Null
+
+      - name: winapp CLI
+        uses: microsoft/setup-WinAppCli@9288bd0729bd3f71e2ed1b9eb247dc91470b824e # v0.3.0
+        with:
+          version: v0.8.0
+
+      - name: Pack (unsigned, for the Store)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          New-Item -ItemType Directory dist -Force | Out-Null
+          winapp pack msix-stage --manifest msix-stage/Package.appxmanifest --no-sign --output "dist/Xciter_${env:VERSION}_x64.msix"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check the package
+        env:
+          MSIX_VERSION: ${{ needs.version.outputs.msix }}
+        run: |
+          $msix = (Get-ChildItem dist/*.msix | Select-Object -First 1).FullName
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($msix)
+          try {
+            $names = $zip.Entries.FullName
+            foreach ($needed in 'xciter.exe', 'AppxManifest.xml', 'Assets/StoreLogo.png', 'Assets/Square44x44Logo.png', 'Assets/Square150x150Logo.png') {
+              if ($names -notcontains $needed) { Write-Output "::error::$needed is missing from the package"; exit 1 }
+            }
+            $reader = New-Object IO.StreamReader(($zip.Entries | Where-Object FullName -eq 'AppxManifest.xml').Open())
+            $manifest = [xml]$reader.ReadToEnd()
+            $reader.Close()
+          } finally { $zip.Dispose() }
+          $identity = $manifest.Package.Identity
+          Write-Output "identity: $($identity.Name) $($identity.Version) $($identity.Publisher)"
+          if ($identity.Version -ne $env:MSIX_VERSION) { Write-Output "::error::package version $($identity.Version) is not $env:MSIX_VERSION"; exit 1 }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-msstore
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  submit:
+    name: Submit to the Microsoft Store
+    if: needs.version.outputs.is_tag == 'true' && needs.version.outputs.prerelease == 'false'
+    needs: [version, build]
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-msstore
+          path: dist
+
+      - name: Microsoft Store CLI
+        uses: microsoft/microsoft-store-apppublisher@cc9910a8d59f2eb55cbb83df0a3800cf3b5300e0 # v1.4
+        with:
+          version: v0.4.4
+
+      - name: Submit
+        env:
+          MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+          MSSTORE_PRODUCT_ID: ${{ vars.MSSTORE_PRODUCT_ID }}
+        run: |
+          $missing = 0
+          foreach ($name in 'MSSTORE_TENANT_ID', 'MSSTORE_SELLER_ID', 'MSSTORE_CLIENT_ID', 'MSSTORE_CLIENT_SECRET', 'MSSTORE_PRODUCT_ID') {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { Write-Output "::error::$name is not set (see docs/release.md)"; $missing = 1 }
+          }
+          if ($missing) { exit 1 }
+          msstore reconfigure --tenantId $env:MSSTORE_TENANT_ID --sellerId $env:MSSTORE_SELLER_ID --clientId $env:MSSTORE_CLIENT_ID --clientSecret $env:MSSTORE_CLIENT_SECRET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $msix = (Get-ChildItem dist/*.msix | Select-Object -First 1).FullName
+          msstore publish $msix --appId $env:MSSTORE_PRODUCT_ID
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output "Submitted for certification; follow it in Partner Center."
