@@ -1,0 +1,38 @@
+name: Windows signing certificate
+description: >-
+  Imports the code-signing certificate (.pfx, base64) into the runner's CurrentUser\My store and outputs
+  its thumbprint for bundle.windows.certificateThumbprint. Fails when either input is empty. Swap this
+  action to move to Azure Key Vault or Artifact Signing; nothing else depends on how the key is stored.
+inputs:
+  pfx-base64:
+    description: The .pfx file, base64-encoded.
+    required: true
+  pfx-password:
+    description: The .pfx password.
+    required: true
+outputs:
+  thumbprint:
+    description: The certificate's SHA-1 thumbprint.
+    value: ${{ steps.import.outputs.thumbprint }}
+runs:
+  using: composite
+  steps:
+    - id: import
+      shell: pwsh
+      env:
+        PFX_BASE64: ${{ inputs.pfx-base64 }}
+        PFX_PASSWORD: ${{ inputs.pfx-password }}
+      run: |
+        if (-not $env:PFX_BASE64) { Write-Output "::error::The WINDOWS_PFX_BASE64 secret is not set"; exit 1 }
+        if (-not $env:PFX_PASSWORD) { Write-Output "::error::The WINDOWS_PFX_PASSWORD secret is not set"; exit 1 }
+        $path = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+        try {
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX_BASE64))
+          $password = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
+        } finally {
+          Remove-Item $path -ErrorAction SilentlyContinue
+        }
+        if (-not $cert.HasPrivateKey) { Write-Output "::error::The certificate has no private key"; exit 1 }
+        Write-Output "Signing as: $($cert.Subject) (valid until $($cert.NotAfter))"
+        "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
