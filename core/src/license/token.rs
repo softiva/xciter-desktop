@@ -5,11 +5,17 @@ use super::*;
 /// What the server signs: `{v:1, k, d, iat, exp, pro:true}`.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Claims {
+    /// Token format version; only 1 is accepted.
     pub v: u32,
+    /// The license key.
     pub k: String,
+    /// The device id the token was issued to.
     pub d: String,
+    /// Issued at, in seconds since 1970.
     pub iat: u64,
+    /// Expires at, in seconds since 1970.
     pub exp: u64,
+    /// Whether the token grants Pro; only Pro tokens are accepted.
     pub pro: bool,
 }
 

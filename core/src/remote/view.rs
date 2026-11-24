@@ -14,13 +14,14 @@ impl Remote {
             .collect()
     }
 
+    /// A song from a paired device, by id.
     pub fn track(&self, id: &str) -> Option<Track> {
         let (host, _) = split(id)?;
         let state = lock(&self.state);
         state.songs.get(host)?.iter().find(|t| t.id == id).cloned()
     }
 
-    /// The device's name, for "on <name>".
+    /// The device's name, for "on `<name>`".
     pub fn host_name(&self, id: &str) -> String {
         lock(&self.state)
             .paired

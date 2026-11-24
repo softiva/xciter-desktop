@@ -2,12 +2,15 @@
 
 use super::*;
 
+/// Bands in the graphic equalizer.
 pub const BANDS: usize = 31;
+/// The centre frequency of each band, in Hz (the ISO third-octave series).
 pub const FREQUENCIES: [f32; BANDS] = [
     20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0,
     500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0,
     8000.0, 10000.0, 12500.0, 16000.0, 20000.0,
 ];
+/// The most a band can be raised or lowered, in dB.
 pub const RANGE_DB: f32 = 6.0;
 /// The presets, in the order the drop-down lists them. "Custom", the user's own curve, comes after them and has no table here.
 pub const PRESETS: [&str; 18] = [
@@ -177,6 +180,7 @@ impl GraphicEq {
         filter.peaking(hz, Self::Q * w.sin() / w, db, rate);
     }
 
+    /// A flat equalizer at the given sample rate.
     pub fn new(rate: f64) -> Self {
         let mut grid = Vec::new();
         for i in 0..BANDS {
@@ -248,6 +252,7 @@ impl GraphicEq {
         result
     }
 
+    /// Sets the curve (dB per band); `on` false is a passthrough. With `headroom`, the input is lowered by what the curve could add.
     pub fn configure(&mut self, curve: &[f32; BANDS], on: bool, headroom: bool) {
         self.on = on;
         self.input = if on && headroom {
@@ -270,6 +275,7 @@ impl GraphicEq {
         }
     }
 
+    /// Clears the filter memories, as after a seek.
     pub fn reset(&mut self) {
         for band in 0..BANDS {
             self.left[band].reset();
@@ -277,6 +283,7 @@ impl GraphicEq {
         }
     }
 
+    /// Runs a block of stereo samples through the curve, in place.
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         if !self.on {
             return;

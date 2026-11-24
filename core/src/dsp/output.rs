@@ -14,6 +14,7 @@ pub struct OutputStage {
 
 impl OutputStage {
     pub(super) const CEILING: f32 = 0.98;
+    /// An output stage at the given sample rate, at 0 dB.
     pub fn new(rate: f64) -> Self {
         let span = ((0.005 * rate).round() as usize).max(1);
         Self {
@@ -25,15 +26,18 @@ impl OutputStage {
             gain: 1.0,
         }
     }
+    /// Sets the master gain in dB.
     pub fn configure(&mut self, master_db: f32) {
         self.gain = 10f64.powf(master_db as f64 / 20.0) as f32;
     }
+    /// Clears the look-ahead, as after a seek.
     pub fn reset(&mut self) {
         self.left.fill(0.0);
         self.right.fill(0.0);
         self.eased.reset();
         self.at = 0;
     }
+    /// Applies the master gain and the limiter to a block, in place; the output is delayed by the look-ahead.
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         for i in 0..left.len() {
             let (in_l, in_r) = (left[i] * self.gain, right[i] * self.gain);
@@ -60,6 +64,7 @@ pub struct OriginalMatch {
     pub(super) acc_dry: f64,
     pub(super) acc_out: f64,
     pub(super) mix: f32,
+    /// How much the original is scaled to match the processed loudness (1 is unchanged).
     pub ratio: f32,
     pub(super) span: usize,
     pub(super) delayed_left: Vec<f32>,
@@ -70,9 +75,11 @@ pub struct OriginalMatch {
 }
 
 impl OriginalMatch {
+    /// A matcher with no extra delay on the original.
     pub fn new(rate: f64) -> Self {
         Self::with_delay(rate, 0.0)
     }
+    /// A matcher that delays the original by `seconds`, to line it up with a processed signal that is delayed that much.
     pub fn with_delay(rate: f64, seconds: f64) -> Self {
         let span = ((seconds * rate).round() as usize).max(if seconds > 0.0 { 1 } else { 0 });
         Self {
@@ -91,6 +98,7 @@ impl OriginalMatch {
         }
     }
 
+    /// Writes the processed block, or the loudness-matched original when `original` is true, into `left`/`right`.
     pub fn process(
         &mut self,
         dry_left: &[f32],
@@ -143,6 +151,7 @@ impl OriginalMatch {
                 + (self.block_right[i] * self.ratio).clamp(-1.0, 1.0) * self.mix;
         }
     }
+    /// Forgets the measured loudness and goes back to the processed sound.
     pub fn reset(&mut self) {
         self.delayed_left.fill(0.0);
         self.delayed_right.fill(0.0);

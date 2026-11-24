@@ -1,4 +1,5 @@
 //! Xciter's player for Windows, macOS and Linux.
+#![warn(missing_docs)]
 pub mod dither;
 pub mod dsp;
 pub mod engine;

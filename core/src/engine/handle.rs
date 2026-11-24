@@ -2,12 +2,14 @@
 
 use super::*;
 
+/// The player's handle on the audio threads. Commands go over a channel; nothing here blocks on audio.
 pub struct Engine {
     pub(super) commands: Sender<Command>,
     pub(super) shared: Arc<Shared>,
 }
 
 impl Engine {
+    /// Starts the output and render threads; `events` receives what the engine reports.
     pub fn start(events: Sender<Event>) -> Self {
         let shared = Arc::new(Shared::new());
         let (producer, consumer) = RingBuffer::<f32>::new(RING_FRAMES * 2);
@@ -25,6 +27,7 @@ impl Engine {
             .expect("fatal at startup: the OS refused to start the render thread");
         Self { commands, shared }
     }
+    /// Plays `plan` from song `position` at `seconds`, playing or paused.
     pub fn start_plan(&self, plan: Plan, position: usize, seconds: f64, playing: bool) {
         let _ = self.commands.send(Command::Start {
             plan,
@@ -33,21 +36,27 @@ impl Engine {
             playing,
         });
     }
+    /// Replaces the plan (the queue changed) without interrupting the song playing now.
     pub fn update(&self, plan: Plan) {
         let _ = self.commands.send(Command::Update(plan));
     }
+    /// Resumes playback.
     pub fn play(&self) {
         let _ = self.commands.send(Command::Play);
     }
+    /// Pauses playback.
     pub fn pause(&self) {
         let _ = self.commands.send(Command::Pause);
     }
+    /// Sets what the next rendered block sounds like.
     pub fn set_sound(&self, sound: SoundSnapshot) {
         *lock(&self.shared.sound) = sound;
     }
+    /// Turns the spectrum meter on or off; it costs a little CPU while on.
     pub fn set_meter(&self, wanted: bool) {
         self.shared.meter.store(wanted, Ordering::Relaxed);
     }
+    /// The name of the output device in use.
     pub fn device(&self) -> String {
         lock(&self.shared.device).clone()
     }
@@ -79,6 +88,7 @@ impl Engine {
         last.clone()
     }
 
+    /// The latest meter bars that have reached the speakers: (music, added).
     pub fn levels(&self) -> Option<(Vec<f32>, Vec<f32>)> {
         let played = self.played();
         let bars = lock(&self.shared.bars);

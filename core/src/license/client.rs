@@ -17,6 +17,7 @@ pub(super) const OFFLINE: &str =
 pub(super) const UNTRUSTED: &str =
     "The license server's answer could not be checked. Try again, or update Xciter.";
 
+/// The license on this computer: the saved key and token, and the server to check them with.
 pub struct License {
     pub(super) config: LicenseConfig,
     pub(super) http: Box<dyn Http>,
@@ -27,6 +28,7 @@ pub struct License {
     pub(super) saved: Mutex<Saved>,
 }
 
+/// Seconds since 1970, from the system clock.
 pub fn now_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -34,6 +36,7 @@ pub fn now_seconds() -> u64 {
         .unwrap_or(0)
 }
 
+/// "windows", "mac" or "linux": the platform this build runs on, as sent to the license server.
 pub fn this_platform() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"
@@ -65,6 +68,7 @@ impl License {
         )
     }
 
+    /// Opens the license saved in `dir` (making a device id on first use), with the given server, HTTP client and clock.
     pub fn open(
         dir: &Path,
         name: String,
@@ -135,6 +139,7 @@ impl License {
         network_allowed(DESKTOP_NETWORK_NEEDS_PRO, self.is_pro())
     }
 
+    /// What the window shows, from what is saved (no network).
     pub fn view(&self) -> View {
         let saved = lock(&self.saved);
         let pro = self.valid(&saved);

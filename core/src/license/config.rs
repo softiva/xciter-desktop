@@ -10,13 +10,17 @@ pub const DESKTOP_NETWORK_NEEDS_PRO: bool = option_env!("XCITER_NETWORK_FREE").i
 /// The two deployed servers. Debug builds and `cargo run` use stage, release builds
 /// production; each has its own signing key, desktop key and database.
 pub const STAGE_URL: &str = "https://asia-southeast1-softiva.cloudfunctions.net/apiStage";
+/// The stage server's Ed25519 public key (base64).
 pub const STAGE_PUBLIC_KEY: &str = "DSFnSx44SBMAj/GaSoYB+1MYoVYiMd05S2zG9eGFQwg=";
+/// The production license server.
 pub const PROD_URL: &str = "https://asia-southeast1-softiva.cloudfunctions.net/apiProd";
+/// The production server's Ed25519 public key (base64).
 pub const PROD_PUBLIC_KEY: &str = "alq+lqoFQmGXZa02k/hBlzSOzNZmPhFEF6TBu+cy2Zs=";
 /// The environment's desktop key, put in by `build.rs` (from `XCITER_DESKTOP_KEY`, `DESKTOP_KEY_FILE` or `.keys/`); empty when a
 /// debug build had none, which sends no signature (a local emulator started with DEV_SKIP_AUTH=1). It can be lifted out of the built
 /// app, so it is friction against casual scanners and not protection.
 pub(super) const DESKTOP_KEY: &str = include_str!(concat!(env!("OUT_DIR"), "/desktop_key.txt"));
+/// How many devices one key works on at once.
 pub const DEVICE_LIMIT: u32 = 4;
 /// How long after a good check-in the next one is due while the app stays open.
 pub(super) const CHECK_EVERY_SECONDS: u64 = 3600;
@@ -25,8 +29,11 @@ pub(super) const KEY_PREFIX: &str = "XCIT";
 /// Where the license server is and the key that checks what it signs.
 #[derive(Clone)]
 pub struct LicenseConfig {
+    /// The server's base URL, with no trailing slash.
     pub base_url: String,
+    /// The Ed25519 key the server's tokens must be signed with.
     pub public_key: [u8; 32],
+    /// The secret that signs requests (see `desktop_signature`); empty in builds without one.
     pub desktop_key: String,
 }
 
@@ -70,6 +77,7 @@ impl LicenseConfig {
         )]
     }
 
+    /// A server at `base_url` with the given public key, and no desktop key; `None` if the key does not parse.
     pub fn new(base_url: &str, public_key: &str) -> Option<Self> {
         Some(Self {
             base_url: base_url.trim_end_matches('/').to_string(),

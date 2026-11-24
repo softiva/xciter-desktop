@@ -2,6 +2,7 @@
 
 use super::*;
 
+/// Bars in the spectrum meter, from bass to air.
 pub const METER_BARS: usize = 34;
 pub(super) const METER_SIZE: usize = 1024;
 
@@ -17,6 +18,7 @@ pub struct SpectrumMeter {
 }
 
 impl SpectrumMeter {
+    /// A meter at the given sample rate.
     pub fn new(rate: f64) -> Self {
         let window = (0..METER_SIZE)
             .map(|i| 0.5 - 0.5 * (2.0 * PI * i as f64 / (METER_SIZE - 1) as f64).cos())
@@ -31,9 +33,11 @@ impl SpectrumMeter {
             count: 0,
         }
     }
+    /// Drops what has been collected so far.
     pub fn reset(&mut self) {
         self.count = 0;
     }
+    /// Adds one frame (the music, and what Xciter added); every 1024 frames returns the bars for both, each 0..1.
     pub fn push(&mut self, music: f32, added: f32) -> Option<(Vec<f32>, Vec<f32>)> {
         self.dry[self.count] = music;
         self.wet[self.count] = added;

@@ -6,17 +6,26 @@ pub(super) const BLOCK: usize = 2048;
 pub(super) const RING_FRAMES: usize = 192_000 / 2;
 
 #[derive(Clone)]
+/// One song in a plan.
 pub struct Item {
+    /// The song's id, as the library knows it.
     pub id: String,
+    /// Where its file is (for another device's song, the copy in the cache).
     pub path: PathBuf,
+    /// Length in seconds.
     pub duration: f64,
+    /// Its ReplayGain tags, for levelling.
     pub gain: ReplayGain,
 }
 
 #[derive(Clone, Default)]
+/// What to play: the songs in order and how to repeat.
 pub struct Plan {
+    /// The songs in the order they play.
     pub items: Vec<Item>,
+    /// Play the same song again at its end.
     pub repeat_one: bool,
+    /// Start over at the first song after the last.
     pub repeat_all: bool,
 }
 
@@ -37,14 +46,23 @@ impl Plan {
 }
 
 #[derive(Clone, PartialEq)]
+/// Everything that shapes the sound, as the render thread applies it.
 pub struct SoundSnapshot {
+    /// The effects chain's settings.
     pub effects: EffectSettings,
+    /// The equalizer's gain per band, in dB.
     pub curve: [f32; BANDS],
+    /// Whether the equalizer is on.
     pub eq_on: bool,
+    /// ReplayGain levelling: "track", "album" or "none".
     pub levelling: String,
+    /// Master gain in dB.
     pub master_db: f32,
+    /// Lower the input so the equalizer's boosts cannot clip.
     pub headroom: bool,
+    /// Crossfade length between songs, in seconds; 0 is none.
     pub crossfade: f64,
+    /// Compare: play the loudness-matched original instead of the processed sound.
     pub original: bool,
 }
 
@@ -63,12 +81,17 @@ impl Default for SoundSnapshot {
     }
 }
 
+/// What the engine (and `remote`) reports to the player.
 pub enum Event {
+    /// This song has started playing at the speakers.
     Track(String),
+    /// The plan has played to its end.
     Finished,
+    /// This song could not be opened or decoded.
     Failed(String),
     /// A song from another device has been copied here / could not be (sent by `remote.rs`, not by the engine).
     Fetched(String),
+    /// A song from another device could not be copied here.
     FetchFailed(String),
 }
 

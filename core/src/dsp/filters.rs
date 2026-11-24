@@ -50,6 +50,7 @@ impl Biquad {
     pub(super) fn high_pass(&mut self, hz: f64, q: f64, rate: f64) {
         self.edge(hz, q, rate, true)
     }
+    /// Makes this a peaking (bell) filter: `db` of gain at `hz` with width `q`.
     pub fn peaking(&mut self, hz: f64, q: f64, db: f64, rate: f64) {
         let a = 10f64.powf(db / 40.0);
         let w = 2.0 * PI * hz / rate;
@@ -62,6 +63,7 @@ impl Biquad {
         self.a2 = (1.0 - alpha / a) / a0;
     }
     #[inline(always)]
+    /// Filters one sample.
     pub fn next(&mut self, x: f64) -> f64 {
         let y = self.b0 * x + self.z1;
         self.z1 = self.b1 * x - self.a1 * y + self.z2;

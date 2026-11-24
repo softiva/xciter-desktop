@@ -27,8 +27,11 @@ const SERVICE: &str = "_xciter._tcp.local.";
 const PREFERRED_PORT: u16 = 47921;
 
 #[derive(Clone, Serialize, Deserialize)]
+/// A device allowed to read this computer's music.
 pub struct PairedDevice {
+    /// The device's id.
     pub id: String,
+    /// The device's name.
     pub name: String,
     token_hash: String,
 }
@@ -47,9 +50,13 @@ fn yes() -> bool {
 }
 
 #[derive(Clone, Serialize)]
+/// Another device asking to pair, for the window to show.
 pub struct PairRequest {
+    /// The asking device's id.
     pub id: String,
+    /// The asking device's name.
     pub name: String,
+    /// The code the person compares with the one on the other device.
     pub code: String,
 }
 
@@ -69,6 +76,7 @@ struct Shared {
 }
 
 #[derive(Clone)]
+/// This computer's music, served over TLS to paired devices and announced on the network.
 pub struct Share {
     shared: Arc<Shared>,
 }
@@ -207,10 +215,12 @@ impl Share {
         *lock(&shared.mdns) = Some(daemon);
     }
 
+    /// Whether sharing is switched on.
     pub fn enabled(&self) -> bool {
         self.shared.enabled.load(Ordering::Relaxed)
     }
 
+    /// Switches sharing on or off, and saves it.
     pub fn set_enabled(&self, on: bool) {
         self.shared.enabled.store(on, Ordering::Relaxed);
         lock(&self.shared.identity).enabled = on;
@@ -223,6 +233,7 @@ impl Share {
         self.shared.allowed.load(Ordering::Relaxed)
     }
 
+    /// Lets sharing run or not, as the license allows; while not allowed nothing is announced or answered.
     pub fn set_allowed(&self, on: bool) {
         self.shared.allowed.store(on, Ordering::Relaxed);
         self.apply();
@@ -237,6 +248,7 @@ impl Share {
         }
     }
 
+    /// The name other devices see.
     pub fn name(&self) -> String {
         self.shared.name.clone()
     }
@@ -245,13 +257,16 @@ impl Share {
     pub fn port(&self) -> u16 {
         self.shared.port.load(Ordering::Relaxed)
     }
+    /// This computer's id as other devices know it.
     pub fn host_id(&self) -> String {
         lock(&self.shared.identity).host_id.clone()
     }
+    /// The devices allowed to read this computer's music.
     pub fn devices(&self) -> Vec<PairedDevice> {
         lock(&self.shared.identity).devices.clone()
     }
 
+    /// Removes a device: its token stops working.
     pub fn forget(&self, id: &str) {
         lock(&self.shared.identity).devices.retain(|d| d.id != id);
         self.save();
@@ -264,6 +279,7 @@ impl Share {
         }
     }
 
+    /// Replaces the songs offered to paired devices, and tells them the library changed.
     pub fn set_library(&self, songs: &[Track]) {
         let digest = Sha256::digest(serde_json::to_vec(songs).unwrap_or_default());
         let version = u64::from_be_bytes(digest[..8].try_into().unwrap_or([0; 8]));

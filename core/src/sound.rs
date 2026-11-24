@@ -11,14 +11,23 @@ pub const PROFILES: [&str; 4] = ["gentle", "signature", "bold", "custom"];
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 #[serde(default)]
 pub struct Mix {
+    /// Whether the exciter is on.
     pub exciter_on: bool,
+    /// Exciter amount, 0..1.
     pub amount: f32,
+    /// Where the exciter's band starts ("processes from"), in Hz.
     pub start_hz: f32,
+    /// Where the added air starts ("harmonics from"), in Hz.
     pub air_hz: f32,
+    /// Whether the virtual bass is on.
     pub bass_on: bool,
+    /// Virtual bass in dB.
     pub bass_db: f32,
+    /// The low edge of the band the bass harmonics are made from, in Hz.
     pub bass_band_hz: f32,
+    /// Only bass harmonics above this are kept, in Hz.
     pub bass_air_hz: f32,
+    /// Crystalizer intensity, 0..1.
     pub crystal: f32,
 }
 
@@ -68,31 +77,55 @@ impl Default for Mix {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+/// Every sound and behaviour setting, as saved and as the window edits it.
 pub struct Sound {
     /// The selected profile, and the user's own values for Custom. The exciter, bass and Crystalizer fields below (and their frequencies) are the live ones.
     pub profile: String,
+    /// What the Custom profile holds.
     pub custom: Mix,
+    /// The Effects master switch; off bypasses every effect.
     pub effects_on: bool,
+    /// Whether the exciter is on.
     pub exciter_on: bool,
+    /// Exciter amount, 0..1.
     pub amount: f32,
+    /// Where the exciter's band starts ("processes from"), in Hz.
     pub start_hz: f32,
+    /// Where the added air starts ("harmonics from"), in Hz.
     pub air_hz: f32,
+    /// Whether the virtual bass is on.
     pub bass_on: bool,
+    /// Virtual bass in dB.
     pub bass_db: f32,
+    /// The low edge of the band the bass harmonics are made from, in Hz.
     pub bass_band_hz: f32,
+    /// Only bass harmonics above this are kept, in Hz.
     pub bass_air_hz: f32,
+    /// Crystalizer intensity, 0..1.
     pub crystal: f32,
+    /// Even out strength, 0..1.
     pub even: f32,
+    /// Round to 16 bit with dither for 16-bit outputs.
     pub dither: bool,
+    /// Whether the equalizer is on.
     pub eq_on: bool,
+    /// The equalizer's gain per band, in dB.
     pub curve: Vec<f32>,
+    /// The user's own curve, kept while a preset is chosen.
     pub yours: Option<Vec<f32>>,
+    /// The chosen preset's name, or `Custom`.
     pub preset: String,
+    /// ReplayGain levelling: "track", "album" or "none".
     pub levelling: String,
+    /// Master gain in dB.
     pub master_db: f32,
+    /// Lower the input so boosts cannot clip.
     pub headroom: bool,
+    /// Whether songs crossfade.
     pub crossfade_on: bool,
+    /// Crossfade length in seconds.
     pub crossfade_seconds: f32,
+    /// The window's theme: "auto", "scheduled", "light" or "dark".
     pub appearance: String,
 }
 
@@ -162,6 +195,7 @@ impl Sound {
         self.tidy();
         self
     }
+    /// The curve as the equalizer takes it, each band clamped to ±`RANGE_DB`.
     pub fn curve_array(&self) -> [f32; BANDS] {
         let mut out = [0.0; BANDS];
         for (slot, value) in out.iter_mut().zip(&self.curve) {
@@ -169,6 +203,7 @@ impl Sound {
         }
         out
     }
+    /// The crossfade length in seconds, 0 when off.
     pub fn crossfade(&self) -> f64 {
         if self.crossfade_on {
             self.crossfade_seconds as f64

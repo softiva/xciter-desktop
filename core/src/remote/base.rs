@@ -19,6 +19,7 @@ pub(super) struct State {
     pub(super) pair_id: u64,
 }
 
+/// Other devices' music: finding them, pairing, reading their libraries and copying songs here to play.
 pub struct Remote {
     pub(super) dir: PathBuf,
     pub(super) cache: PathBuf,

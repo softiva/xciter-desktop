@@ -3,10 +3,12 @@
 use super::*;
 
 impl Remote {
+    /// The pairing in progress or just finished, if any.
     pub fn pairing(&self) -> Option<Pairing> {
         lock(&self.state).pairing.clone()
     }
 
+    /// Stops waiting for a pairing; any answer that still arrives is ignored.
     pub fn cancel_pairing(&self) {
         let mut state = lock(&self.state);
         state.pair_id += 1; // a pairing in flight finds it has been replaced and stops

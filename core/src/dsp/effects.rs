@@ -37,6 +37,7 @@ pub(super) struct Made {
 /// 6 kHz, 4th order) → the band over its own level through the oversampled soft clipper → high-pass at the
 /// chosen "harmonics from" frequency (4th order), so only the air is added.
 pub struct EffectsChain {
+    /// What the chain is running with now.
     pub settings: EffectSettings,
     /// The music in the frame `process` just returned, before any effect added to it.
     pub music: f64,
@@ -73,6 +74,7 @@ pub struct EffectsChain {
 }
 
 impl EffectsChain {
+    /// An idle chain at the given sample rate, with every effect off.
     pub fn new(rate: f64) -> Self {
         let span = ((BASS_LOOK_AHEAD_S * rate).round() as usize).max(1);
         let zero = vec![0.0; span];
@@ -159,6 +161,7 @@ impl EffectsChain {
             .high_pass(next.bass_air_hz as f64, Q2, rate);
     }
 
+    /// Clears every filter, envelope and look-ahead, as after a seek.
     pub fn reset(&mut self) {
         self.even_power = 0.0;
         self.even_target = 1.0;

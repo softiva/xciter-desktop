@@ -14,10 +14,15 @@ const AUDIO: [&str; 11] = [
 ];
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug)]
+/// A song's ReplayGain tags, in dB (gain) and linear (peak).
 pub struct ReplayGain {
+    /// Gain to bring the song to the reference level.
     pub track_gain: Option<f32>,
+    /// Gain to bring the album to the reference level.
     pub album_gain: Option<f32>,
+    /// The song's highest sample.
     pub track_peak: Option<f32>,
+    /// The album's highest sample.
     pub album_peak: Option<f32>,
 }
 
@@ -60,17 +65,29 @@ impl ReplayGain {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+/// A song in the library.
 pub struct Track {
+    /// Its id: the file's path (`r:<device>:<id>` for another device's song).
     pub id: String,
+    /// Title, from the tags or else the file name.
     pub title: String,
+    /// Artist, or "Unknown artist".
     pub artist: String,
+    /// Album, or "Unknown album".
     pub album: String,
+    /// Album artist; empty when the tags have none.
     pub album_artist: String,
+    /// Track number, from the tags or else the start of the file name.
     pub track_number: u32,
+    /// Disc number.
     pub disc_number: u32,
+    /// Length in seconds.
     pub duration: f64,
+    /// The file type: its extension in capitals.
     pub kind: String,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// ReplayGain tags.
     pub gain: ReplayGain,
     /// The folder the song sits in, used to keep albums with the same name apart.
     pub folder: String,
@@ -80,9 +97,13 @@ pub struct Track {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+/// A playlist: a name and song ids in order.
 pub struct Playlist {
+    /// Its id.
     pub id: String,
+    /// Its name.
     pub name: String,
+    /// The song ids, in order.
     pub songs: Vec<String>,
 }
 
@@ -100,9 +121,11 @@ struct Saved {
     playlists: Vec<Playlist>,
 }
 
+/// The music folders and playlists, and the songs found in the folders.
 pub struct Library {
     dir: PathBuf,
     saved: Saved,
+    /// Every song in the folders, sorted by title.
     pub songs: Vec<Track>,
     by_id: HashMap<String, usize>,
 }
@@ -233,6 +256,7 @@ fn read(path: &Path) -> Track {
 }
 
 impl Library {
+    /// The library saved in `dir` (folders and playlists); it has no songs until `refresh` reads the folders.
     pub fn new(dir: PathBuf) -> Self {
         let _ = fs::create_dir_all(&dir);
         let saved = fs::read(dir.join("library.json"))
@@ -252,22 +276,27 @@ impl Library {
             let _ = fs::write(self.dir.join("library.json"), data);
         }
     }
+    /// The music folders.
     pub fn folders(&self) -> Vec<String> {
         self.saved.folders.clone()
     }
+    /// The playlists.
     pub fn playlists(&self) -> Vec<Playlist> {
         self.saved.playlists.clone()
     }
+    /// A song by id.
     pub fn track(&self, id: &str) -> Option<&Track> {
         self.by_id.get(id).map(|&at| &self.songs[at])
     }
 
+    /// Adds a music folder (songs appear on the next `refresh`).
     pub fn add_folder(&mut self, folder: String) {
         if !self.saved.folders.contains(&folder) {
             self.saved.folders.push(folder);
             self.save();
         }
     }
+    /// Removes a music folder (its songs go on the next `refresh`).
     pub fn remove_folder(&mut self, folder: &str) {
         self.saved.folders.retain(|f| f != folder);
         self.save();
@@ -334,6 +363,7 @@ impl Library {
         }
     }
 
+    /// Makes an empty playlist and returns its id.
     pub fn create_playlist(&mut self, name: &str) -> String {
         let clean: String = name.trim().chars().take(80).collect();
         if let Some(found) = self
@@ -356,10 +386,12 @@ impl Library {
         self.save();
         id
     }
+    /// Deletes a playlist.
     pub fn delete_playlist(&mut self, id: &str) {
         self.saved.playlists.retain(|p| p.id != id);
         self.save();
     }
+    /// Renames a playlist.
     pub fn rename_playlist(&mut self, id: &str, name: &str) {
         let clean: String = name.trim().chars().take(80).collect();
         if clean.is_empty() {
@@ -373,6 +405,7 @@ impl Library {
             .sort_by_cached_key(|p| p.name.to_lowercase());
         self.save();
     }
+    /// Adds a song to the end of a playlist.
     pub fn add_to_playlist(&mut self, id: &str, song: &str) {
         if let Some(list) = self.saved.playlists.iter_mut().find(|p| p.id == id) {
             if !list.songs.iter().any(|s| s == song) {
@@ -381,12 +414,14 @@ impl Library {
             }
         }
     }
+    /// Removes a song from a playlist.
     pub fn remove_from_playlist(&mut self, id: &str, song: &str) {
         if let Some(list) = self.saved.playlists.iter_mut().find(|p| p.id == id) {
             list.songs.retain(|s| s != song);
             self.save();
         }
     }
+    /// Moves a song within a playlist.
     pub fn move_in_playlist(&mut self, id: &str, from: usize, to: usize) {
         let available = &self.by_id;
         if let Some(list) = self.saved.playlists.iter_mut().find(|p| p.id == id) {

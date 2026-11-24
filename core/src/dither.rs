@@ -5,12 +5,13 @@
 //! above about 15 kHz, and switches off after 50 ms of digital silence so there is no hiss between songs.
 //! One instance per output stream; it keeps each channel's error history and random state.
 
-/// The shaper's feedback coefficients: noise transfer function 1 - sum(h[k] z^-(k+1)).
+/// The shaper's feedback coefficients: noise transfer function `1 - sum(h[k] z^-(k+1))`.
 pub const SHAPE: [f64; 5] = [2.033, -2.165, 1.959, -1.590, 0.6149];
 /// Largest error fed back, in LSB: clipping at full scale must not swing the shaper.
 const ERROR_LIMIT: f64 = 2.0;
 const SILENT_LSB: f64 = 0.01;
 
+/// The ditherer for one output stream, keeping each channel's error history and random state.
 pub struct Dither {
     error: Vec<[f64; 5]>,
     seed: Vec<u32>,
@@ -19,6 +20,7 @@ pub struct Dither {
 }
 
 impl Dither {
+    /// A ditherer for `channels` channels at `rate` Hz.
     pub fn new(channels: usize, rate: f64) -> Self {
         let channels = channels.max(1);
         let mut dither = Self {
@@ -31,6 +33,7 @@ impl Dither {
         dither
     }
 
+    /// Clears the error history and restarts the random sequence, as after a seek.
     pub fn reset(&mut self) {
         for c in 0..self.error.len() {
             self.error[c] = [0.0; 5];

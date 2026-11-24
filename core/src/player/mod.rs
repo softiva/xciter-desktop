@@ -15,24 +15,39 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
+/// What happens at the end of a song.
 pub enum Repeat {
     #[default]
+    /// Play on, and stop after the last song.
     Off,
+    /// Play the same song again.
     One,
+    /// Start over after the last song.
     All,
 }
 
 #[derive(Serialize)]
+/// What the window shows of playback.
 pub struct State {
+    /// The song playing or paused.
     pub current: Option<Track>,
+    /// Its place in the queue.
     pub index: usize,
+    /// The next songs (at most 50).
     pub up_next: Vec<Track>,
+    /// Whether it is playing.
     pub playing: bool,
+    /// Whether shuffle is on.
     pub shuffle: bool,
+    /// What happens at the end of a song.
     pub repeat: Repeat,
+    /// Where in the song, in seconds.
     pub seconds: f64,
+    /// The song's length in seconds.
     pub duration: f64,
+    /// The song could not be played.
     pub failed: bool,
+    /// The output device's name.
     pub device: String,
     /// While a song from another device is being copied here: that device's name.
     pub fetching: Option<String>,
@@ -48,6 +63,7 @@ struct Saved {
     repeat: Option<Repeat>,
 }
 
+/// The player: the queue, the library, the sound settings, and the engine that plays them.
 pub struct Player {
     dir: PathBuf,
     engine: Engine,
@@ -56,7 +72,9 @@ pub struct Player {
     /// Other devices' music (see `remote.rs`), and the song waiting for its copy to arrive.
     remote: Option<Arc<Remote>>,
     waiting: Option<String>,
+    /// The music folders, playlists and songs.
     pub library: Library,
+    /// The sound settings, saved on every change.
     pub sound: Sound,
     /// Compare: hearing the original for a moment. Never saved.
     pub comparing: bool,
@@ -72,6 +90,7 @@ pub struct Player {
 }
 
 impl Player {
+    /// The player saved in `dir` (queue, sound, history), with the engine started and paused.
     pub fn new(dir: PathBuf) -> Self {
         let _ = fs::create_dir_all(&dir);
         let (events_tx, events) = channel();
@@ -117,6 +136,7 @@ impl Player {
         self.events.take()
     }
 
+    /// The song playing or paused, if any.
     pub fn current(&self) -> Option<&Track> {
         self.queue.current()
     }
@@ -170,6 +190,7 @@ impl Player {
         }
     }
 
+    /// What the window shows now; also takes the playing position from the engine.
     pub fn state(&mut self) -> State {
         if self.playing {
             if let Some((_, seconds)) = self.engine.now() {
@@ -203,13 +224,16 @@ impl Player {
         }
     }
 
+    /// The latest meter bars: (music, added).
     pub fn levels(&self) -> Option<(Vec<f32>, Vec<f32>)> {
         self.engine.levels()
     }
+    /// Turns the spectrum meter on or off.
     pub fn set_meter(&self, wanted: bool) {
         self.engine.set_meter(wanted);
     }
 
+    /// Sends the sound settings to the engine and saves them.
     pub fn push_sound(&mut self) {
         self.sound.sync_profile();
         let s = &self.sound;
@@ -274,10 +298,12 @@ impl Player {
         self.save();
     }
 
+    /// The songs with these ids that can be found, in order.
     pub fn tracks_of(&self, ids: &[String]) -> Vec<Track> {
         ids.iter().filter_map(|id| self.find(id)).collect()
     }
 
+    /// Plays `tracks` from `position` (shuffled after it, with shuffle on).
     pub fn play(&mut self, tracks: Vec<Track>, position: usize) {
         if !self.queue.set(tracks, position) {
             return;
@@ -286,6 +312,7 @@ impl Player {
         self.start(0.0, true);
     }
 
+    /// Plays `tracks` in a random order, with shuffle off.
     pub fn shuffled(&mut self, mut tracks: Vec<Track>) {
         if tracks.is_empty() {
             return;
@@ -295,12 +322,14 @@ impl Player {
         self.play(tracks, 0);
     }
 
+    /// Plays the queued song with this id.
     pub fn jump(&mut self, id: &str) {
         if self.queue.go_to(id) {
             self.start(0.0, true);
         }
     }
 
+    /// Play or pause; with nothing queued, shuffles the whole library.
     pub fn toggle(&mut self) {
         if self.queue.order.is_empty() {
             let all = self.library.songs.clone();
@@ -314,6 +343,7 @@ impl Player {
         }
     }
 
+    /// Plays again from where it paused (from the start once the queue has ended).
     pub fn resume(&mut self) {
         if self.queue.order.is_empty() {
             return;
@@ -331,6 +361,7 @@ impl Player {
         self.playing = true;
     }
 
+    /// Pauses and remembers where.
     pub fn pause(&mut self) {
         if !self.playing {
             return;
@@ -347,6 +378,7 @@ impl Player {
         self.save();
     }
 
+    /// Skips to the next song.
     pub fn next(&mut self) {
         if !self.queue.advance() {
             return;
@@ -355,15 +387,18 @@ impl Player {
         self.start(0.0, playing);
     }
 
+    /// Tries the song that failed again, from where it was.
     pub fn retry_failed(&mut self) {
         self.start(self.seconds, true);
     }
 
+    /// Skips the song that failed and plays on.
     pub fn skip_failed(&mut self) {
         self.playing = true;
         self.next();
     }
 
+    /// Back to the start of the song, or to the previous one in its first 3 seconds.
     pub fn previous(&mut self) {
         if self.queue.order.is_empty() {
             return;
@@ -378,6 +413,7 @@ impl Player {
         self.start(0.0, playing);
     }
 
+    /// Moves to `seconds` in the song.
     pub fn seek(&mut self, seconds: f64) {
         if self.queue.order.is_empty() {
             return;
@@ -389,12 +425,14 @@ impl Player {
         }
     }
 
+    /// Turns shuffle on or off, keeping the song playing.
     pub fn toggle_shuffle(&mut self) {
         if self.queue.toggle_shuffle() {
             self.push_plan();
         }
     }
 
+    /// Off → one → all → off.
     pub fn cycle_repeat(&mut self) {
         self.queue.cycle_repeat();
         self.push_plan();
@@ -407,6 +445,7 @@ impl Player {
         self.save();
     }
 
+    /// Plays this song after the current one.
     pub fn play_next(&mut self, track: Track) {
         let Some(now) = self.current() else {
             self.play(vec![track], 0);
@@ -419,6 +458,7 @@ impl Player {
         self.push_plan();
     }
 
+    /// Adds this song to the end of the queue.
     pub fn add_to_queue(&mut self, track: Track) {
         let Some(now) = self.current() else {
             self.play(vec![track], 0);
@@ -438,6 +478,7 @@ impl Player {
         }
     }
 
+    /// Takes a song out of Up next.
     pub fn remove_up_next(&mut self, id: &str) {
         self.queue.remove(id);
         self.push_plan();

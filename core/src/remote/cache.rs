@@ -15,6 +15,7 @@ impl Remote {
         Some(self.cache.join(format!("{host}-{song}.{ext}")))
     }
 
+    /// Whether this song's copy is already here.
     pub fn is_cached(&self, id: &str) -> bool {
         self.path_of(id).map(|p| p.exists()).unwrap_or(false)
     }
@@ -55,6 +56,7 @@ impl Remote {
             .ok();
     }
 
+    /// Whether this song is being copied here now.
     pub fn is_fetching(&self, id: &str) -> bool {
         lock(&self.state).fetching.contains(id)
     }
@@ -141,6 +143,7 @@ impl Remote {
         self.track(id).is_some()
     }
 
+    /// Where copies of other devices' songs are kept.
     pub fn cache_dir(&self) -> &Path {
         &self.cache
     }

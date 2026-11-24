@@ -15,6 +15,7 @@ pub enum HttpError {
 /// One HTTPS call: the JSON bytes to send (exactly these, since a signature covers them) and any extra headers.
 /// `Ok((status, json))` for any answer the server gave, `Err` when it could not be reached.
 pub trait Http: Send + Sync {
+    /// Posts `body` with `headers` to `url`.
     fn post(
         &self,
         url: &str,
@@ -23,6 +24,7 @@ pub trait Http: Send + Sync {
     ) -> Result<(u16, Value), HttpError>;
 }
 
+/// The real HTTP client, with a 15 second timeout.
 pub struct UreqHttp;
 
 impl Http for UreqHttp {

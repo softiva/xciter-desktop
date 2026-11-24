@@ -18,6 +18,7 @@ pub struct Air {
 }
 
 impl Air {
+    /// An idle generator at the given sample rate, keeping air from the default frequency.
     pub fn new(rate: f64) -> Self {
         let fast = rate * AIR_OVERSAMPLE as f64;
         let mut air = Self {
