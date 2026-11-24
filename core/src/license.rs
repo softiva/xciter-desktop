@@ -38,7 +38,7 @@ pub const PROD_PUBLIC_KEY: &str = "alq+lqoFQmGXZa02k/hBlzSOzNZmPhFEF6TBu+cy2Zs="
 const DESKTOP_KEY: &str = include_str!(concat!(env!("OUT_DIR"), "/desktop_key.txt"));
 pub const DEVICE_LIMIT: u32 = 4;
 /// How long after a good check-in the next one is due while the app stays open.
-const CHECK_EVERY_SECONDS: u64 = 20 * 3600;
+const CHECK_EVERY_SECONDS: u64 = 3600;
 const KEY_PREFIX: &str = "XCIT";
 
 /// Where the license server is and the key that checks what it signs.
@@ -745,7 +745,9 @@ mod tests {
         done(license.activate(KEY));
         let first = license.saved.lock().unwrap().token.clone().unwrap();
         assert!(!license.check_due());
-        rig.later(21 * 3600);
+        rig.later(1800);
+        assert!(!license.check_due(), "half an hour after a check-in nothing is due");
+        rig.later(21 * 3600 - 1800);
         assert!(license.check_due());
         let view = license.check_in();
         assert!(view.pro && view.checked == T0 + 21 * 3600 && !license.check_due());
