@@ -1,0 +1,56 @@
+# Works out what this run builds from the git ref (see scripts/version-info). On a tag it fails unless the
+# tag equals the version in app/tauri.conf.json and both Cargo.toml files.
+name: Version
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: The app version, as in tauri.conf.json (SemVer).
+        value: ${{ jobs.version.outputs.version }}
+      prerelease:
+        description: '"true" when the version has a pre-release part.'
+        value: ${{ jobs.version.outputs.prerelease }}
+      msix:
+        description: The four-number version the Microsoft Store needs.
+        value: ${{ jobs.version.outputs.msix }}
+      msi:
+        description: '"true" when an .msi can be built (WiX rejects text pre-releases).'
+        value: ${{ jobs.version.outputs.msi }}
+      is_tag:
+        description: '"true" for a release tag build.'
+        value: ${{ jobs.version.outputs.is_tag }}
+      tag:
+        description: The release tag, empty on branch builds.
+        value: ${{ jobs.version.outputs.tag }}
+      label:
+        description: What artifact names carry (the version, plus the short commit on branch builds).
+        value: ${{ jobs.version.outputs.label }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      prerelease: ${{ steps.info.outputs.prerelease }}
+      msix: ${{ steps.info.outputs.msix }}
+      msi: ${{ steps.info.outputs.msi }}
+      is_tag: ${{ steps.info.outputs.is_tag }}
+      tag: ${{ steps.info.outputs.tag }}
+      label: ${{ steps.info.outputs.label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: info
+        run: scripts/version-info "$GITHUB_REF" "$GITHUB_SHA" | tee -a "$GITHUB_OUTPUT"

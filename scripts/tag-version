@@ -1,0 +1,36 @@
+#!/bin/sh
+# Turns a release tag into the versions each package needs, as key=value lines for $GITHUB_OUTPUT.
+#
+#   scripts/tag-version v1.2.0-beta.1
+#   version=1.2.0-beta.1   the app version (SemVer, as in tauri.conf.json)
+#   prerelease=true        a tag with a pre-release part is published as a GitHub pre-release
+#   msix=1.2.0.0           the Microsoft Store needs four numbers and no pre-release text
+#   msi=false              WiX rejects text pre-releases, so pre-releases get no .msi
+#
+# Exits 1 for a tag that is not `v` + SemVer (MAJOR.MINOR.PATCH, optional -PRE, no build metadata).
+set -eu
+
+tag=${1:?usage: tag-version vMAJOR.MINOR.PATCH[-PRE]}
+version=${tag#v}
+if [ "$version" = "$tag" ]; then
+    echo "tag-version: '$tag' does not start with v" >&2
+    exit 1
+fi
+
+number='(0|[1-9][0-9]*)'
+identifier='[0-9A-Za-z-]+'
+if ! printf '%s\n' "$version" | grep -Eq "^$number\\.$number\\.$number(-$identifier(\\.$identifier)*)?\$"; then
+    echo "tag-version: '$tag' is not v + SemVer, e.g. v1.2.3 or v1.2.3-beta.1" >&2
+    exit 1
+fi
+
+core=${version%%-*}
+case $version in
+    *-*) prerelease=true msi=false ;;
+    *) prerelease=false msi=true ;;
+esac
+
+echo "version=$version"
+echo "prerelease=$prerelease"
+echo "msix=$core.0"
+echo "msi=$msi"

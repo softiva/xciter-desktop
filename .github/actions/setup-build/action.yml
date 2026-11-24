@@ -1,0 +1,52 @@
+name: Set up a build
+description: >-
+  Rust stable (as in rust-toolchain.toml) with extra targets, the cargo cache, and optionally Node with the
+  Tauri CLI from package-lock.json. On Linux it also installs the libraries Tauri 2 and ALSA need.
+inputs:
+  targets:
+    description: Extra Rust targets, comma-separated (for example aarch64-apple-darwin,x86_64-apple-darwin).
+    required: false
+    default: ""
+  cache-key:
+    description: Separates the cargo caches of jobs that build different things.
+    required: false
+    default: ""
+  node:
+    description: Install Node and the Tauri CLI (npm ci). Not needed for cargo-only jobs.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Rust toolchain
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1 (2026-10-16)
+      with:
+        toolchain: stable
+        targets: ${{ inputs.targets }}
+        components: rustfmt, clippy
+
+    - name: Cargo cache
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        key: ${{ inputs.cache-key }}
+
+    - name: Linux libraries (WebKitGTK 4.1, GTK, ALSA)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+          librsvg2-dev libasound2-dev patchelf
+
+    - name: Node
+      if: inputs.node == 'true'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: lts/*
+        cache: npm
+
+    - name: Tauri CLI (npm ci)
+      if: inputs.node == 'true'
+      shell: bash
+      run: npm ci

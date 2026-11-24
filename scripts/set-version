@@ -1,0 +1,36 @@
+#!/bin/sh
+# Sets the app version everywhere it is written: app/tauri.conf.json, core/Cargo.toml, app/Cargo.toml
+# and their entries in Cargo.lock. Tag the commit `v<version>` afterwards.
+#
+#   scripts/set-version 1.2.0-beta.1
+#
+# ROOT may point at another checkout (the tests use a copy).
+set -eu
+
+version=${1:?usage: set-version MAJOR.MINOR.PATCH[-PRE]}
+here=$(cd "$(dirname "$0")" && pwd)
+root=${ROOT:-$(cd "$here/.." && pwd)}
+
+# Validate with the same rules as release tags.
+"$here/tag-version" "v$version" >/dev/null
+
+# Rewrites the first line matching `pattern` with `replacement` (awk, so it works with BSD and GNU tools).
+rewrite_first() {
+    file=$1 pattern=$2 replacement=$3
+    tmp="$file.tmp.$$"
+    awk -v pattern="$pattern" -v replacement="$replacement" '
+        !done && $0 ~ pattern { print replacement; done = 1; next }
+        { print }
+        END { if (!done) exit 3 }
+    ' "$file" >"$tmp" || { rm -f "$tmp"; echo "set-version: no version line in $file" >&2; exit 1; }
+    mv "$tmp" "$file"
+}
+
+rewrite_first "$root/app/tauri.conf.json" '^  "version": "' "  \"version\": \"$version\","
+rewrite_first "$root/core/Cargo.toml" '^version = "' "version = \"$version\""
+rewrite_first "$root/app/Cargo.toml" '^version = "' "version = \"$version\""
+
+if [ -f "$root/Cargo.lock" ] && [ -z "${SKIP_LOCK:-}" ]; then
+    (cd "$root" && cargo update --workspace --offline --quiet)
+fi
+echo "version set to $version"

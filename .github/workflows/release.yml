@@ -1,0 +1,46 @@
+# Creates the draft GitHub Release for a release tag as soon as the tag is pushed. The build-*.yml
+# workflows upload into it (scripts/release-upload waits for it), so parallel builds never race to create
+# duplicate drafts. A maintainer reviews the draft and publishes it; checksums.yml then adds SHA256SUMS.
+name: Release draft
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    uses: ./.github/workflows/_version.yml
+
+  draft:
+    name: Create the draft release
+    needs: version
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create it unless it exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            echo "A release for $TAG exists already."
+            exit 0
+          fi
+          flags=(--draft --verify-tag --generate-notes --title "Xciter $VERSION")
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" "${flags[@]}"
