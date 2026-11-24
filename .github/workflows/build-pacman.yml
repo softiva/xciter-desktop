@@ -117,6 +117,7 @@ jobs:
           pacman -U --noconfirm ./*.pkg.tar.zst
           pacman -Qi xciter-bin
           bin=$(pacman -Qlq xciter-bin | grep -m1 '/bin/.')
+          [ -n "$bin" ] || { echo "::error::xciter-bin installs no binary"; exit 1; }
           echo "binary: $bin"
           if ldd "$bin" | grep 'not found'; then echo "::error::missing libraries"; exit 1; fi
 

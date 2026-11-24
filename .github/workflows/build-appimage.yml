@@ -61,7 +61,8 @@ jobs:
           esac
           chmod +x "$image"
           cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$image" --appimage-extract >/dev/null
-          bin=$(find squashfs-root/usr/bin -maxdepth 1 -type f -name 'xciter*' | head -1)
+          bin=$(find squashfs-root/usr/bin -maxdepth 1 -type f -iname 'xciter*' | head -1)
+          [ -n "$bin" ] || { echo "::error::no xciter binary in the AppImage"; ls -R squashfs-root/usr/bin; exit 1; }
           echo "binary: $bin"
           if ldd "$bin" | grep 'not found'; then echo "::error::missing libraries"; exit 1; fi
 

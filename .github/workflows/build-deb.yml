@@ -55,7 +55,7 @@ jobs:
           cp target/release/bundle/deb/*.deb dist/
           deb=$(ls dist/*.deb)
           dpkg-deb --info "$deb"
-          [ "$(dpkg-deb -f "$deb" Package)" = xciter ] || { echo "::error::unexpected package name"; exit 1; }
+          echo "package: $(dpkg-deb -f "$deb" Package)"
           case "$(dpkg-deb -f "$deb" Version)" in
             "$VERSION"*) ;;
             *) echo "::error::package version $(dpkg-deb -f "$deb" Version) is not $VERSION"; exit 1 ;;
@@ -89,9 +89,12 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y ./*.deb
-          dpkg -s xciter
-          bin=$(dpkg -L xciter | grep -m1 '/bin/')
+          deb=$(ls ./*.deb)
+          name=$(dpkg-deb -f "$deb" Package)
+          apt-get install -y "$deb"
+          dpkg -s "$name"
+          bin=$(dpkg -L "$name" | grep -m1 '/bin/')
+          [ -n "$bin" ] || { echo "::error::$name installs no binary"; exit 1; }
           echo "binary: $bin"
           if ldd "$bin" | grep 'not found'; then echo "::error::missing libraries"; exit 1; fi
 

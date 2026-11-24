@@ -65,6 +65,7 @@ jobs:
         env:
           MSI: ${{ needs.version.outputs.msi }}
         run: |
+          if (-not (Test-Path target/release/xciter.exe)) { Write-Output "::error::target/release/xciter.exe was not built"; exit 1 }
           $files = @('target/release/xciter.exe') + (Get-ChildItem target/release/bundle/nsis/*.exe).FullName
           if ($env:MSI -eq 'true') { $files += (Get-ChildItem target/release/bundle/msi/*.msi).FullName }
           $bad = 0

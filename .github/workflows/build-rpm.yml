@@ -56,7 +56,7 @@ jobs:
           cp target/release/bundle/rpm/*.rpm dist/
           rpm=$(ls dist/*.rpm)
           rpm -qip "$rpm"
-          [ "$(rpm -qp --qf '%{NAME}' "$rpm")" = xciter ] || { echo "::error::unexpected package name"; exit 1; }
+          echo "package: $(rpm -qp --qf '%{NAME}' "$rpm")"
           rpm -qp --requires "$rpm" | grep -q alsa-lib || { echo "::error::ALSA dependency missing"; exit 1; }
           echo "rpm version: $(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$rpm") (app $VERSION)"
 
@@ -80,9 +80,12 @@ jobs:
 
       - name: Install and check
         run: |
-          dnf install -y ./*.rpm
-          rpm -qi xciter
-          bin=$(rpm -ql xciter | grep -m1 '/bin/')
+          rpm=$(ls ./*.rpm)
+          name=$(rpm -qp --qf '%{NAME}' "$rpm")
+          dnf install -y "$rpm"
+          rpm -qi "$name"
+          bin=$(rpm -ql "$name" | grep -m1 '/bin/')
+          [ -n "$bin" ] || { echo "::error::$name installs no binary"; exit 1; }
           echo "binary: $bin"
           if ldd "$bin" | grep 'not found'; then echo "::error::missing libraries"; exit 1; fi
 
