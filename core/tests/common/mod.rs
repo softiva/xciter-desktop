@@ -7,7 +7,8 @@
 //! To record again after an *intended* change to the sound, run the test with `GOLDEN_RECORD=1`
 //! and review the diff of the `.txt` file.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test crate uses only some of these helpers")]
+#![expect(clippy::panic, reason = "test helpers fail the test by panicking")]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

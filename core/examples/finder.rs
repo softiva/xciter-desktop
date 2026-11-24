@@ -11,7 +11,7 @@ fn main() {
     println!("Looking for 10 seconds…");
     std::thread::sleep(Duration::from_secs(10));
     let view = remote.view();
-    println!("{}", serde_json::to_string_pretty(&view).unwrap());
+    println!("{view:#}");
     let Some(name) = std::env::args().nth(1) else {
         return;
     };

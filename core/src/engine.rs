@@ -6,6 +6,7 @@ use crate::dsp::{
     EffectSettings, EffectsChain, GraphicEq, OriginalMatch, OutputStage, SpectrumMeter, BANDS,
 };
 use crate::library::ReplayGain;
+use crate::sync::lock;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat};
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -161,13 +162,13 @@ impl Engine {
         thread::Builder::new()
             .name("xciter-output".into())
             .spawn(move || output_thread(audio_shared, consumer))
-            .expect("output thread");
+            .expect("fatal at startup: the OS refused to start the audio output thread");
         let (commands, receiver) = channel();
         let render_shared = shared.clone();
         thread::Builder::new()
             .name("xciter-render".into())
             .spawn(move || Renderer::new(render_shared, producer, receiver, events).run())
-            .expect("render thread");
+            .expect("fatal at startup: the OS refused to start the render thread");
         Self { commands, shared }
     }
     pub fn start_plan(&self, plan: Plan, position: usize, seconds: f64, playing: bool) {
@@ -188,13 +189,13 @@ impl Engine {
         let _ = self.commands.send(Command::Pause);
     }
     pub fn set_sound(&self, sound: SoundSnapshot) {
-        *self.shared.sound.lock().unwrap() = sound;
+        *lock(&self.shared.sound) = sound;
     }
     pub fn set_meter(&self, wanted: bool) {
         self.shared.meter.store(wanted, Ordering::Relaxed);
     }
     pub fn device(&self) -> String {
-        self.shared.device.lock().unwrap().clone()
+        lock(&self.shared.device).clone()
     }
 
     fn played(&self) -> i64 {
@@ -208,8 +209,8 @@ impl Engine {
             return None;
         }
         let played = self.played();
-        let marks = self.shared.marks.lock().unwrap();
-        let mut last = self.shared.last.lock().unwrap();
+        let marks = lock(&self.shared.marks);
+        let mut last = lock(&self.shared.last);
         if let Some(mark) = marks
             .iter()
             .rev()
@@ -226,7 +227,7 @@ impl Engine {
 
     pub fn levels(&self) -> Option<(Vec<f32>, Vec<f32>)> {
         let played = self.played();
-        let bars = self.shared.bars.lock().unwrap();
+        let bars = lock(&self.shared.bars);
         bars.iter()
             .rev()
             .find(|b| b.frame <= played)
@@ -258,6 +259,12 @@ impl Output for u16 {
     }
 }
 
+/// The sound card's callback: copies rendered frames from the ring to the device buffer.
+///
+/// Real-time rules, because this runs on the OS audio thread and any wait is heard as a click:
+/// no `lock()` (only `try_lock`, which plays silence when the lock is busy), no allocation, no I/O.
+/// The ring's consumer sits behind a mutex only so it can outlive each stream when the output device
+/// changes; nothing else holds that lock while a stream is playing.
 fn fill<T: Output>(
     data: &mut [T],
     channels: usize,
@@ -353,7 +360,7 @@ fn output_thread(shared: Arc<Shared>, consumer: Arc<Mutex<Consumer<f32>>>) {
             thread::sleep(Duration::from_secs(1));
             continue;
         }
-        *shared.device.lock().unwrap() = name.clone();
+        *lock(&shared.device) = name.clone();
         shared.rate.store(config.sample_rate.0, Ordering::Release);
         shared.device_generation.fetch_add(1, Ordering::AcqRel);
         loop {
@@ -520,14 +527,10 @@ impl Deck {
             let spec = *decoded.spec();
             let channels = spec.channels.count().max(1);
             let capacity = decoded.capacity() as u64;
-            if self
-                .sample_buffer
-                .as_ref()
-                .is_none_or(|b| b.capacity() < capacity as usize * channels)
-            {
-                self.sample_buffer = Some(SampleBuffer::<f32>::new(capacity, spec));
-            }
-            let buffer = self.sample_buffer.as_mut().unwrap();
+            let buffer = match &mut self.sample_buffer {
+                Some(buffer) if buffer.capacity() >= capacity as usize * channels => buffer,
+                slot => slot.insert(SampleBuffer::<f32>::new(capacity, spec)),
+            };
             buffer.copy_interleaved_ref(decoded);
             if self.resampler.is_none() {
                 for frame in buffer.samples().chunks(channels) {
@@ -541,16 +544,13 @@ impl Deck {
                 self.input[0].push(frame[0]);
                 self.input[1].push(if channels > 1 { frame[1] } else { frame[0] });
             }
-            loop {
-                let needed = self.resampler.as_ref().unwrap().input_frames_next();
-                if self.input[0].len() < needed {
+            while let Some(resampler) = self.resampler.as_mut() {
+                if self.input[0].len() < resampler.input_frames_next() {
                     break;
                 }
-                let Ok((consumed, written)) = self.resampler.as_mut().unwrap().process_into_buffer(
-                    &self.input,
-                    &mut self.output,
-                    None,
-                ) else {
+                let Ok((consumed, written)) =
+                    resampler.process_into_buffer(&self.input, &mut self.output, None)
+                else {
                     return false;
                 };
                 self.input[0].drain(..consumed);
@@ -659,7 +659,7 @@ impl Renderer {
     }
 
     fn sound(&self) -> SoundSnapshot {
-        self.shared.sound.lock().unwrap().clone()
+        lock(&self.shared.sound).clone()
     }
 
     fn follow_device(&mut self) {
@@ -673,7 +673,7 @@ impl Renderer {
             return;
         }
         // The sound is rebuilt for the new output, carrying on from where the listener is.
-        let place = self.shared.last.lock().unwrap().clone();
+        let place = lock(&self.shared.last).clone();
         let seconds = place.map(|p| p.1).unwrap_or(0.0);
         self.rate = rate;
         let r = rate as f64;
@@ -719,8 +719,8 @@ impl Renderer {
         self.eq.reset();
         self.stage.reset();
         self.meter.reset();
-        self.shared.marks.lock().unwrap().clear();
-        self.shared.bars.lock().unwrap().clear();
+        lock(&self.shared.marks).clear();
+        lock(&self.shared.bars).clear();
         self.wanted_playing = playing;
         self.shared.paused.store(!playing, Ordering::Relaxed);
         self.deck = None;
@@ -799,7 +799,7 @@ impl Renderer {
     }
 
     fn mark(&self, offset: usize, id: String, seconds: f64) {
-        let mut marks = self.shared.marks.lock().unwrap();
+        let mut marks = lock(&self.shared.marks);
         marks.push(Mark {
             frame: self.scheduled + offset as i64,
             id,
@@ -813,7 +813,7 @@ impl Renderer {
     fn check_boundary(&mut self) {
         let played = self.shared.played.load(Ordering::Relaxed) as i64;
         let id = {
-            let marks = self.shared.marks.lock().unwrap();
+            let marks = lock(&self.shared.marks);
             marks
                 .iter()
                 .rev()
@@ -977,7 +977,9 @@ impl Renderer {
                     self.outgoing = None;
                 }
             }
-            let current = self.deck.as_mut().unwrap();
+            let Some(current) = self.deck.as_mut() else {
+                break;
+            };
             let take = (BLOCK - done)
                 .min(current.available())
                 .min(self.outgoing.as_ref().map_or(usize::MAX, |d| d.available()));
@@ -1023,7 +1025,7 @@ impl Renderer {
                         .meter
                         .push(music, if original { 0.0 } else { (l + r) / 2.0 - music })
                     {
-                        let mut bars = self.shared.bars.lock().unwrap();
+                        let mut bars = lock(&self.shared.bars);
                         bars.push(Bars {
                             frame: self.scheduled + (done + i) as i64,
                             dry,

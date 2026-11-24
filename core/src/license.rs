@@ -8,6 +8,7 @@
 //!
 //! All the calls are made here in the core (never in the window), through the small `Http` trait, so the tests can
 //! put a fake server in its place. Nothing but a random device id, this computer's name and its platform is sent.
+use crate::sync::lock;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -58,7 +59,8 @@ impl LicenseConfig {
         } else {
             (PROD_URL, PROD_PUBLIC_KEY)
         };
-        let mut config = Self::new(url, public).expect("the built-in public key is valid");
+        let mut config = Self::new(url, public)
+            .expect("invariant: the built-in public keys are valid (see the tests)");
         config.desktop_key = DESKTOP_KEY.trim().to_string();
         if cfg!(debug_assertions) {
             if let Ok(url) = std::env::var("XCITER_LICENSE_URL") {
@@ -254,7 +256,8 @@ pub fn desktop_signature(
     seconds: u64,
     nonce: &str,
 ) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("any key length");
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .expect("invariant: HMAC accepts a key of any length");
     mac.update(format!("{seconds}.{nonce}.{path}.{}", hex(&Sha256::digest(body))).as_bytes());
     format!(
         "t={seconds},n={nonce},v1={}",
@@ -423,14 +426,14 @@ impl License {
             saved: Mutex::new(saved),
         };
         if fresh {
-            license.save(&license.saved.lock().unwrap());
+            license.save(&lock(&license.saved));
         }
         license
     }
 
     /// Made once and kept in this app's own storage; never derived from the hardware.
     pub fn device_id(&self) -> String {
-        self.saved.lock().unwrap().device_id.clone()
+        lock(&self.saved).device_id.clone()
     }
 
     fn now(&self) -> u64 {
@@ -458,7 +461,7 @@ impl License {
 
     /// Pro on this computer: a valid, unexpired token for this device.
     pub fn is_pro(&self) -> bool {
-        self.valid(&self.saved.lock().unwrap())
+        self.valid(&lock(&self.saved))
     }
 
     /// Whether this computer may be found and shared with (see `DESKTOP_NETWORK_NEEDS_PRO`).
@@ -467,7 +470,7 @@ impl License {
     }
 
     pub fn view(&self) -> View {
-        let saved = self.saved.lock().unwrap();
+        let saved = lock(&self.saved);
         let pro = self.valid(&saved);
         View {
             pro,
@@ -535,7 +538,7 @@ impl License {
 
     /// Keeps a reply's token (when it checks out) with the key and the device list; false when the token is missing or not trusted.
     fn accept(&self, key: &str, reply: &Value) -> bool {
-        let mut saved = self.saved.lock().unwrap();
+        let mut saved = lock(&self.saved);
         let good = reply["token"].as_str().filter(|t| {
             verify_token(t, &self.config.public_key, &saved.device_id, self.now()).is_some()
         });
@@ -549,7 +552,7 @@ impl License {
     }
 
     fn forget(&self) {
-        let mut saved = self.saved.lock().unwrap();
+        let mut saved = lock(&self.saved);
         saved.key = None;
         saved.token = None;
         saved.devices.clear();
@@ -588,7 +591,7 @@ impl License {
     /// Takes another device off the key. With `typed` (the refusal dialog, where this computer is not on the key yet) the
     /// list comes back to try again; without it, this computer's own key is used and the answer is its new state.
     pub fn remove(&self, typed: Option<&str>, target: &str) -> Outcome {
-        let own = self.saved.lock().unwrap().key.clone();
+        let own = lock(&self.saved).key.clone();
         let key = typed.map(full_key).or(own.clone());
         let Some(key) = key else {
             return Outcome::Failed {
@@ -635,7 +638,7 @@ impl License {
     /// Asks the server for a fresh token. A computer that was removed from the key, or whose license was refunded, loses Pro; a failed
     /// call (offline, busy) changes nothing, so the cached token keeps working until it runs out.
     pub fn check_in(&self) -> View {
-        let key = self.saved.lock().unwrap().key.clone();
+        let key = lock(&self.saved).key.clone();
         let Some(key) = key else { return self.view() };
         match self.call(
             "/status",
@@ -658,7 +661,7 @@ impl License {
 
     /// True when a key is stored and the last good check-in is about a day old.
     pub fn check_due(&self) -> bool {
-        let saved = self.saved.lock().unwrap();
+        let saved = lock(&self.saved);
         saved.key.is_some() && self.now().saturating_sub(saved.checked) >= CHECK_EVERY_SECONDS
     }
 }
@@ -865,7 +868,7 @@ mod tests {
     fn with_a_desktop_key_every_call_is_signed_and_a_server_that_wants_it_accepts_them() {
         let mut rig = Rig::new();
         rig.desktop_key = "desktop-secret".into();
-        *rig.server.desktop_key.lock().unwrap() = Some("desktop-secret".into());
+        *lock(&rig.server.desktop_key) = Some("desktop-secret".into());
         let license = rig.open();
         assert!(done(license.activate(KEY)).pro);
         assert!(license.check_in().pro);
@@ -998,7 +1001,7 @@ mod tests {
             self.now.load(Ordering::SeqCst)
         }
         fn put(&self, id: &str, name: &str, platform: &str) {
-            self.devices.lock().unwrap().push(Placed {
+            lock(&self.devices).push(Placed {
                 id: id.into(),
                 name: name.into(),
                 platform: platform.into(),
@@ -1006,16 +1009,16 @@ mod tests {
             });
         }
         fn has(&self, id: &str) -> bool {
-            self.devices.lock().unwrap().iter().any(|d| d.id == id)
+            lock(&self.devices).iter().any(|d| d.id == id)
         }
         fn list(&self, me: &str) -> Value {
             let mut devices: Vec<&Placed> = Vec::new();
-            let guard = self.devices.lock().unwrap();
+            let guard = lock(&self.devices);
             devices.extend(guard.iter());
             json!(devices.iter().map(|d| json!({ "id": d.id, "name": d.name, "platform": d.platform, "lastSeen": d.last_seen, "thisDevice": d.id == me })).collect::<Vec<_>>())
         }
         fn reply(&self, me: &str, pro: bool) -> (u16, Value) {
-            let signer = if *self.forged.lock().unwrap() {
+            let signer = if *lock(&self.forged) {
                 signing(99)
             } else {
                 self.signer.clone()
@@ -1040,7 +1043,7 @@ mod tests {
         ) -> Result<(u16, Value), String> {
             let body: Value = serde_json::from_slice(bytes).unwrap();
             let body = &body;
-            if let Some(secret) = self.desktop_key.lock().unwrap().clone() {
+            if let Some(secret) = lock(&self.desktop_key).clone() {
                 let given = headers
                     .iter()
                     .find(|(n, _)| *n == "x-xciter-signature")
@@ -1061,7 +1064,7 @@ mod tests {
                     ));
                 }
             }
-            if !*self.online.lock().unwrap() {
+            if !*lock(&self.online) {
                 return Err("no route".into());
             }
             let path = url
@@ -1069,12 +1072,12 @@ mod tests {
                 .map(|(_, p)| p)
                 .unwrap_or(url)
                 .to_string();
-            self.calls.lock().unwrap().push(path.clone());
+            lock(&self.calls).push(path.clone());
             let me = body["deviceId"].as_str().unwrap_or("").to_string();
             if tidy_key(body["key"].as_str().unwrap_or("")) != KEY {
                 return Ok(Fake::refuse(404, "invalid_key", "That key is not right."));
             }
-            if *self.revoked.lock().unwrap() {
+            if *lock(&self.revoked) {
                 return Ok(Fake::refuse(
                     403,
                     "revoked",
@@ -1084,7 +1087,7 @@ mod tests {
             let now = self.now();
             match path.as_str() {
                 "/activate" => {
-                    let mut devices = self.devices.lock().unwrap();
+                    let mut devices = lock(&self.devices);
                     if let Some(d) = devices.iter_mut().find(|d| d.id == me) {
                         d.last_seen = now;
                     } else if devices.len() < 4 {
@@ -1107,12 +1110,12 @@ mod tests {
                 }
                 "/deactivate" => {
                     let target = body["targetDeviceId"].as_str().unwrap_or("").to_string();
-                    self.devices.lock().unwrap().retain(|d| d.id != target);
+                    lock(&self.devices).retain(|d| d.id != target);
                     let here = self.has(&me);
                     Ok(self.reply(&me, here))
                 }
                 "/status" => {
-                    let mut devices = self.devices.lock().unwrap();
+                    let mut devices = lock(&self.devices);
                     let here = if let Some(d) = devices.iter_mut().find(|d| d.id == me) {
                         d.last_seen = now;
                         true
@@ -1167,7 +1170,7 @@ mod tests {
             self.now.fetch_add(seconds, Ordering::SeqCst);
         }
         fn offline(&self, off: bool) {
-            *self.server.online.lock().unwrap() = !off;
+            *lock(&self.server.online) = !off;
         }
     }
 
@@ -1208,7 +1211,7 @@ mod tests {
             "no key: nothing to check"
         );
         assert!(
-            rig.server.calls.lock().unwrap().is_empty(),
+            lock(&rig.server.calls).is_empty(),
             "a free computer never calls the server"
         );
     }
@@ -1260,7 +1263,7 @@ mod tests {
     #[test]
     fn a_refunded_key_cannot_be_entered() {
         let rig = Rig::new();
-        *rig.server.revoked.lock().unwrap() = true;
+        *lock(&rig.server.revoked) = true;
         match rig.open().activate(KEY) {
             Outcome::Failed { message, .. } => assert!(message.contains("refunded"), "{message}"),
             other => panic!("{other:?}"),
@@ -1335,7 +1338,7 @@ mod tests {
         let rig = Rig::new();
         let license = rig.open();
         done(license.activate(KEY));
-        let first = license.saved.lock().unwrap().token.clone().unwrap();
+        let first = lock(&license.saved).token.clone().unwrap();
         assert!(!license.check_due());
         rig.later(1800);
         assert!(
@@ -1347,7 +1350,7 @@ mod tests {
         let view = license.check_in();
         assert!(view.pro && view.checked == T0 + 21 * 3600 && !license.check_due());
         assert_ne!(
-            license.saved.lock().unwrap().token.clone().unwrap(),
+            lock(&license.saved).token.clone().unwrap(),
             first,
             "a fresh token"
         );
@@ -1368,7 +1371,7 @@ mod tests {
         let rig = Rig::new();
         let license = rig.open();
         done(license.activate(KEY));
-        rig.server.devices.lock().unwrap().clear();
+        lock(&rig.server.devices).clear();
         rig.later(DAY);
         let view = license.check_in();
         assert!(!view.pro && view.key.is_none() && view.devices.is_empty() && !view.expired);
@@ -1380,7 +1383,7 @@ mod tests {
         let rig = Rig::new();
         let license = rig.open();
         done(license.activate(KEY));
-        *rig.server.revoked.lock().unwrap() = true;
+        *lock(&rig.server.revoked) = true;
         let view = license.check_in();
         assert!(!view.pro && view.key.is_none());
         assert!(!rig.open().is_pro(), "and it stays gone after a restart");
@@ -1391,7 +1394,7 @@ mod tests {
         let rig = Rig::new();
         let license = rig.open();
         done(license.activate(KEY));
-        license.saved.lock().unwrap().key = Some("XCIT-ZZZZ-ZZZZ-ZZZZ-ZZZZ".into());
+        lock(&license.saved).key = Some("XCIT-ZZZZ-ZZZZ-ZZZZ-ZZZZ".into());
         assert!(!license.check_in().pro && license.view().key.is_none());
     }
 
@@ -1457,7 +1460,7 @@ mod tests {
     #[test]
     fn an_answer_signed_with_another_key_is_not_trusted() {
         let rig = Rig::new();
-        *rig.server.forged.lock().unwrap() = true;
+        *lock(&rig.server.forged) = true;
         let license = rig.open();
         match license.activate(KEY) {
             Outcome::Failed { message, .. } => assert!(message.contains("could not be checked")),

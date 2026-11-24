@@ -4,6 +4,7 @@
 //! pins that certificate, and both sides show a code made from it, so the person pairing can tell
 //! they are talking to the right computer. Afterwards every request carries a secret token.
 use crate::library::Track;
+use crate::sync::lock;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use rand::RngCore;
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
@@ -88,24 +89,24 @@ pub fn pairing_code(fingerprint: &str, nonce: &str) -> String {
     )
 }
 
-fn load_identity(path: &Path) -> Identity {
+/// The saved identity, or a new one with a fresh certificate; `None` only if no certificate can be made.
+fn load_identity(path: &Path) -> Option<Identity> {
     if let Some(found) = fs::read(path)
         .ok()
         .and_then(|d| serde_json::from_slice(&d).ok())
     {
-        return found;
+        return Some(found);
     }
-    let made =
-        rcgen::generate_simple_self_signed(vec!["xciter.local".to_string()]).expect("certificate");
+    let made = rcgen::generate_simple_self_signed(vec!["xciter.local".to_string()]).ok()?;
     let mut id = [0u8; 8];
     rand::thread_rng().fill_bytes(&mut id);
-    Identity {
+    Some(Identity {
         host_id: hex(&id),
         cert: made.cert.der().to_vec(),
         key: made.key_pair.serialize_der(),
         devices: Vec::new(),
         enabled: true,
-    }
+    })
 }
 
 impl Share {
@@ -117,7 +118,7 @@ impl Share {
         on_request: impl Fn(PairRequest) + Send + Sync + 'static,
     ) -> Option<Self> {
         let path = dir.join("share.json");
-        let identity = load_identity(&path);
+        let identity = load_identity(&path)?;
         let fingerprint = sha(&identity.cert);
         let config =
             ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
@@ -176,7 +177,7 @@ impl Share {
     }
 
     fn save(&self) {
-        let identity = self.shared.identity.lock().unwrap();
+        let identity = lock(&self.shared.identity);
         if let Ok(data) = serde_json::to_vec(&*identity) {
             let _ = fs::write(&self.shared.path, data);
         }
@@ -184,13 +185,13 @@ impl Share {
 
     fn advertise(&self) {
         let shared = &self.shared;
-        if shared.mdns.lock().unwrap().is_some() {
+        if lock(&shared.mdns).is_some() {
             return;
         }
         let Ok(daemon) = ServiceDaemon::new() else {
             return;
         };
-        let id = shared.identity.lock().unwrap().host_id.clone();
+        let id = lock(&shared.identity).host_id.clone();
         let host = format!("xciter-{}.local.", &id[..8]);
         let properties = [("id", id.as_str()), ("v", "1")];
         if let Ok(info) = ServiceInfo::new(
@@ -203,7 +204,7 @@ impl Share {
         ) {
             let _ = daemon.register(info.enable_addr_auto());
         }
-        *shared.mdns.lock().unwrap() = Some(daemon);
+        *lock(&shared.mdns) = Some(daemon);
     }
 
     pub fn enabled(&self) -> bool {
@@ -212,7 +213,7 @@ impl Share {
 
     pub fn set_enabled(&self, on: bool) {
         self.shared.enabled.store(on, Ordering::Relaxed);
-        self.shared.identity.lock().unwrap().enabled = on;
+        lock(&self.shared.identity).enabled = on;
         self.save();
         self.apply();
     }
@@ -231,7 +232,7 @@ impl Share {
     fn apply(&self) {
         if self.enabled() && self.allowed() {
             self.advertise();
-        } else if let Some(daemon) = self.shared.mdns.lock().unwrap().take() {
+        } else if let Some(daemon) = lock(&self.shared.mdns).take() {
             let _ = daemon.shutdown();
         }
     }
@@ -245,25 +246,20 @@ impl Share {
         self.shared.port.load(Ordering::Relaxed)
     }
     pub fn host_id(&self) -> String {
-        self.shared.identity.lock().unwrap().host_id.clone()
+        lock(&self.shared.identity).host_id.clone()
     }
     pub fn devices(&self) -> Vec<PairedDevice> {
-        self.shared.identity.lock().unwrap().devices.clone()
+        lock(&self.shared.identity).devices.clone()
     }
 
     pub fn forget(&self, id: &str) {
-        self.shared
-            .identity
-            .lock()
-            .unwrap()
-            .devices
-            .retain(|d| d.id != id);
+        lock(&self.shared.identity).devices.retain(|d| d.id != id);
         self.save();
     }
 
     /// The person's answer to a pairing request.
     pub fn respond(&self, id: &str, allow: bool) {
-        if let Some(waiting) = self.shared.waiting.lock().unwrap().remove(id) {
+        if let Some(waiting) = lock(&self.shared.waiting).remove(id) {
             let _ = waiting.send(allow);
         }
     }
@@ -280,7 +276,7 @@ impl Share {
                 )
             })
             .collect();
-        *self.shared.songs.lock().unwrap() = map;
+        *lock(&self.shared.songs) = map;
         self.shared
             .library_version
             .store(version, Ordering::Relaxed);
@@ -324,7 +320,7 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
     let (path, query) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
 
     if method == "GET" && path == "/info" {
-        let id = shared.identity.lock().unwrap().host_id.clone();
+        let id = lock(&shared.identity).host_id.clone();
         let library_version = shared.library_version.load(Ordering::Relaxed);
         return respond(&mut tls, "200 OK", "application/json", json!({ "id": id, "name": shared.name, "version": 1, "libraryVersion": library_version }).to_string().as_bytes());
     }
@@ -345,10 +341,7 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
         .unwrap_or("");
     let hashed = sha(token.as_bytes());
     if token.is_empty()
-        || !shared
-            .identity
-            .lock()
-            .unwrap()
+        || !lock(&shared.identity)
             .devices
             .iter()
             .any(|d| d.token_hash == hashed)
@@ -357,7 +350,7 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
     }
 
     if method == "GET" && path == "/library" {
-        let songs: Vec<_> = shared.songs.lock().unwrap().iter().map(|(id, (t, _))| json!({
+        let songs: Vec<_> = lock(&shared.songs).iter().map(|(id, (t, _))| json!({
             "id": id, "title": t.title, "artist": t.artist, "album": t.album, "albumArtist": t.album_artist,
             "trackNumber": t.track_number, "discNumber": t.disc_number, "duration": t.duration, "kind": t.kind, "sampleRate": t.sample_rate,
             "ext": Path::new(&t.id).extension().and_then(|e| e.to_str()).unwrap_or(""),
@@ -372,7 +365,7 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
     }
     if method == "GET" {
         if let Some(id) = path.strip_prefix("/file/") {
-            let found = shared.songs.lock().unwrap().get(id).map(|(_, p)| p.clone());
+            let found = lock(&shared.songs).get(id).map(|(_, p)| p.clone());
             let Some(file) = found else {
                 return respond(&mut tls, "404 Not Found", "text/plain", b"no such song");
             };
@@ -382,7 +375,7 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
             return tls.flush();
         }
         if let Some(id) = path.strip_prefix("/art/") {
-            let found = shared.songs.lock().unwrap().get(id).map(|(_, p)| p.clone());
+            let found = lock(&shared.songs).get(id).map(|(_, p)| p.clone());
             let size: u32 = query
                 .strip_prefix("size=")
                 .and_then(|v| v.parse().ok())
@@ -411,11 +404,7 @@ fn pair(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()>
     };
     let name: String = name.chars().take(60).collect();
     let (answer, waiting) = channel();
-    shared
-        .waiting
-        .lock()
-        .unwrap()
-        .insert(id.to_string(), answer);
+    lock(&shared.waiting).insert(id.to_string(), answer);
     (shared.on_request)(PairRequest {
         id: id.to_string(),
         name: name.clone(),
@@ -424,7 +413,7 @@ fn pair(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()>
     let allowed = waiting
         .recv_timeout(Duration::from_secs(90))
         .unwrap_or(false);
-    shared.waiting.lock().unwrap().remove(id);
+    lock(&shared.waiting).remove(id);
     if !allowed {
         return respond(tls, "403 Forbidden", "text/plain", b"declined");
     }
@@ -432,7 +421,7 @@ fn pair(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()>
     rand::thread_rng().fill_bytes(&mut secret);
     let token = hex(&secret);
     {
-        let mut identity = shared.identity.lock().unwrap();
+        let mut identity = lock(&shared.identity);
         identity.devices.retain(|d| d.id != id);
         identity.devices.push(PairedDevice {
             id: id.to_string(),
@@ -442,7 +431,7 @@ fn pair(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()>
         let data = serde_json::to_vec(&*identity)?;
         fs::write(&shared.path, data)?;
     }
-    let host_id = shared.identity.lock().unwrap().host_id.clone();
+    let host_id = lock(&shared.identity).host_id.clone();
     respond(
         tls,
         "200 OK",

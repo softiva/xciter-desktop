@@ -959,7 +959,7 @@ impl GraphicEq {
         for pivot in 0..n {
             let best = (pivot..n)
                 .max_by(|&x, &y| a[x][pivot].abs().total_cmp(&a[y][pivot].abs()))
-                .unwrap();
+                .unwrap_or(pivot);
             a.swap(pivot, best);
             let scale = a[pivot][pivot];
             for value in a[pivot].iter_mut() {

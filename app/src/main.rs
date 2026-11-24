@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use xciter_core::dsp;
@@ -13,6 +13,7 @@ use xciter_core::player::{self, Player};
 use xciter_core::remote::{self, Remote};
 use xciter_core::share::{PairedDevice, Share};
 use xciter_core::sound::Sound;
+use xciter_core::sync::lock;
 
 struct App {
     player: Arc<Mutex<Player>>,
@@ -22,35 +23,34 @@ struct App {
     license: Arc<License>,
 }
 
-macro_rules! player {
-    ($app:expr) => {
-        $app.player.lock().unwrap()
-    };
+/// The player, locked for one command.
+fn player(app: &App) -> MutexGuard<'_, Player> {
+    lock(&app.player)
 }
 
 #[tauri::command]
 fn state(app: State<App>) -> player::State {
-    player!(app).state()
+    player(&app).state()
 }
 #[tauri::command]
 fn suggestions(app: State<App>) -> Vec<Track> {
-    player!(app).suggestions()
+    player(&app).suggestions()
 }
 #[tauri::command]
 fn play_history(app: State<App>) -> HashMap<String, (u32, u64)> {
-    player!(app).history().clone()
+    player(&app).history().clone()
 }
 #[tauri::command]
 fn songs(app: State<App>) -> Vec<Track> {
-    player!(app).everything()
+    player(&app).everything()
 }
 #[tauri::command]
 fn folders(app: State<App>) -> Vec<String> {
-    player!(app).library.folders()
+    player(&app).library.folders()
 }
 #[tauri::command]
 fn refresh_library(app: State<App>) -> Vec<Track> {
-    let mut p = player!(app);
+    let mut p = player(&app);
     p.library.refresh();
     if let Some(share) = &app.share {
         share.set_library(&p.library.songs);
@@ -59,97 +59,97 @@ fn refresh_library(app: State<App>) -> Vec<Track> {
 }
 #[tauri::command]
 fn play(app: State<App>, ids: Vec<String>, index: usize) {
-    let mut p = player!(app);
+    let mut p = player(&app);
     let t = p.tracks_of(&ids);
     p.play(t, index);
 }
 #[tauri::command]
 fn shuffle_all(app: State<App>, ids: Vec<String>) {
-    let mut p = player!(app);
+    let mut p = player(&app);
     let t = p.tracks_of(&ids);
     p.shuffled(t);
 }
 #[tauri::command]
 fn toggle(app: State<App>) {
-    player!(app).toggle();
+    player(&app).toggle();
 }
 #[tauri::command]
 fn pause(app: State<App>) {
-    player!(app).pause();
+    player(&app).pause();
 }
 #[tauri::command]
 fn next(app: State<App>) {
-    player!(app).next();
+    player(&app).next();
 }
 #[tauri::command]
 fn retry_failed(app: State<App>) {
-    player!(app).retry_failed();
+    player(&app).retry_failed();
 }
 #[tauri::command]
 fn skip_failed(app: State<App>) {
-    player!(app).skip_failed();
+    player(&app).skip_failed();
 }
 #[tauri::command]
 fn previous(app: State<App>) {
-    player!(app).previous();
+    player(&app).previous();
 }
 #[tauri::command]
 fn seek(app: State<App>, seconds: f64) {
-    player!(app).seek(seconds);
+    player(&app).seek(seconds);
 }
 #[tauri::command]
 fn toggle_shuffle(app: State<App>) {
-    player!(app).toggle_shuffle();
+    player(&app).toggle_shuffle();
 }
 #[tauri::command]
 fn cycle_repeat(app: State<App>) {
-    player!(app).cycle_repeat();
+    player(&app).cycle_repeat();
 }
 #[tauri::command]
 fn jump(app: State<App>, id: String) {
-    player!(app).jump(&id);
+    player(&app).jump(&id);
 }
 #[tauri::command]
 fn play_next(app: State<App>, id: String) {
-    let mut p = player!(app);
+    let mut p = player(&app);
     if let Some(t) = p.find(&id) {
         p.play_next(t);
     }
 }
 #[tauri::command]
 fn add_to_queue(app: State<App>, id: String) {
-    let mut p = player!(app);
+    let mut p = player(&app);
     if let Some(t) = p.find(&id) {
         p.add_to_queue(t);
     }
 }
 #[tauri::command]
 fn move_up_next(app: State<App>, from: usize, to: usize) {
-    player!(app).move_up_next(from, to);
+    player(&app).move_up_next(from, to);
 }
 #[tauri::command]
 fn remove_up_next(app: State<App>, id: String) {
-    player!(app).remove_up_next(&id);
+    player(&app).remove_up_next(&id);
 }
 
 #[tauri::command]
 fn set_meter(app: State<App>, wanted: bool) {
-    player!(app).set_meter(wanted);
+    player(&app).set_meter(wanted);
 }
 #[tauri::command]
 fn meter(app: State<App>) -> Option<(Vec<f32>, Vec<f32>)> {
-    player!(app).levels()
+    player(&app).levels()
 }
 
 #[tauri::command]
 fn compare(app: State<App>, on: bool) {
-    let mut p = player!(app);
+    let mut p = player(&app);
     p.comparing = on;
     p.push_sound();
 }
 #[tauri::command]
 fn sound_get(app: State<App>) -> Sound {
-    player!(app).sound.clone()
+    player(&app).sound.clone()
 }
 #[tauri::command]
 fn constants() -> Value {
@@ -159,7 +159,7 @@ fn constants() -> Value {
 /// Merges changed settings into the saved ones.
 #[tauri::command]
 fn sound_set(app: State<App>, patch: Value) -> Sound {
-    let mut p = player!(app);
+    let mut p = player(&app);
     if let (Ok(mut merged), Value::Object(changes)) = (serde_json::to_value(&p.sound), patch) {
         if let Value::Object(fields) = &mut merged {
             for (key, value) in changes {
@@ -175,21 +175,21 @@ fn sound_set(app: State<App>, patch: Value) -> Sound {
 }
 #[tauri::command]
 fn sound_band(app: State<App>, band: usize, gain: f32) -> Sound {
-    let mut p = player!(app);
+    let mut p = player(&app);
     p.sound.set_band(band, gain);
     p.push_sound();
     p.sound.clone()
 }
 #[tauri::command]
 fn sound_preset(app: State<App>, name: String) -> Sound {
-    let mut p = player!(app);
+    let mut p = player(&app);
     p.sound.choose_preset(&name);
     p.push_sound();
     p.sound.clone()
 }
 #[tauri::command]
 fn sound_profile(app: State<App>, name: String) -> Sound {
-    let mut p = player!(app);
+    let mut p = player(&app);
     p.sound.select_profile(&name);
     p.push_sound();
     p.sound.clone()
@@ -197,31 +197,31 @@ fn sound_profile(app: State<App>, name: String) -> Sound {
 
 #[tauri::command]
 fn playlists(app: State<App>) -> Vec<Playlist> {
-    player!(app).library.playlists()
+    player(&app).library.playlists()
 }
 #[tauri::command]
 fn create_playlist(app: State<App>, name: String) -> String {
-    player!(app).library.create_playlist(&name)
+    player(&app).library.create_playlist(&name)
 }
 #[tauri::command]
 fn delete_playlist(app: State<App>, id: String) {
-    player!(app).library.delete_playlist(&id);
+    player(&app).library.delete_playlist(&id);
 }
 #[tauri::command]
 fn rename_playlist(app: State<App>, id: String, name: String) {
-    player!(app).library.rename_playlist(&id, &name);
+    player(&app).library.rename_playlist(&id, &name);
 }
 #[tauri::command]
 fn add_to_playlist(app: State<App>, id: String, song: String) {
-    player!(app).library.add_to_playlist(&id, &song);
+    player(&app).library.add_to_playlist(&id, &song);
 }
 #[tauri::command]
 fn remove_from_playlist(app: State<App>, id: String, song: String) {
-    player!(app).library.remove_from_playlist(&id, &song);
+    player(&app).library.remove_from_playlist(&id, &song);
 }
 #[tauri::command]
 fn move_in_playlist(app: State<App>, id: String, from: usize, to: usize) {
-    player!(app).library.move_in_playlist(&id, from, to);
+    player(&app).library.move_in_playlist(&id, from, to);
 }
 
 /// Reading a large collection takes a while, so it never runs on the window's own thread.
@@ -233,14 +233,14 @@ async fn add_folder(window: tauri::Window, app: State<'_, App>) -> Result<Vec<Tr
         .set_title("Choose a music folder")
         .blocking_pick_folder();
     let Some(picked) = picked else {
-        return Ok(player!(app).everything());
+        return Ok(player(&app).everything());
     };
     let folder = picked
         .into_path()
         .map_err(|e| e.to_string())?
         .to_string_lossy()
         .to_string();
-    let mut p = player!(app);
+    let mut p = player(&app);
     p.library.add_folder(folder);
     p.library.refresh();
     if let Some(share) = &app.share {
@@ -251,7 +251,7 @@ async fn add_folder(window: tauri::Window, app: State<'_, App>) -> Result<Vec<Tr
 
 #[tauri::command]
 async fn remove_folder(app: State<'_, App>, folder: String) -> Result<Vec<Track>, String> {
-    let mut p = player!(app);
+    let mut p = player(&app);
     p.library.remove_folder(&folder);
     p.library.refresh();
     if let Some(share) = &app.share {
@@ -385,7 +385,7 @@ async fn license_check(window: tauri::Window, app: State<'_, App>) -> Result<Vie
 #[tauri::command]
 async fn art(app: State<'_, App>, id: String, size: u32) -> Result<Option<String>, String> {
     let key = format!("{id}@{size}");
-    if let Some(known) = app.art.lock().unwrap().get(&key) {
+    if let Some(known) = lock(&app.art).get(&key) {
         return Ok(known.clone());
     }
     let found = if remote::is_remote(&id) {
@@ -393,7 +393,7 @@ async fn art(app: State<'_, App>, id: String, size: u32) -> Result<Option<String
     } else {
         library::artwork(&id, size)
     };
-    let mut cache = app.art.lock().unwrap();
+    let mut cache = lock(&app.art);
     if cache.len() > 2000 {
         cache.clear();
     }
@@ -439,7 +439,9 @@ fn main() {
             });
             created.attach_remote(remote.clone());
             remote.set_enabled(license.network_allowed());
-            let events = created.take_events().expect("events");
+            let events = created
+                .take_events()
+                .expect("invariant: a new player still holds its event receiver");
             let player = Arc::new(Mutex::new(created));
             app.manage(App {
                 player: player.clone(),
@@ -465,7 +467,7 @@ fn main() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 for event in events {
-                    player.lock().unwrap().handle(event);
+                    lock(&player).handle(event);
                     let _ = handle.emit("changed", ());
                 }
             });

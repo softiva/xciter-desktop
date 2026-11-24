@@ -7,6 +7,12 @@
 //! license server, which is what a fork or a local test server (see `LicenseConfig`) wants. A release build with no key fails here, loudly.
 //! The key is never printed and never committed; it ends up inside the built app, from where anyone can lift it, so it is
 //! friction against casual scanners and nothing more.
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "a build script reports failure by panicking; cargo always sets the variables unwrapped here"
+)]
+
 use std::{env, fs, path::PathBuf};
 
 fn main() {

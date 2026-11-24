@@ -8,3 +8,4 @@ pub mod player;
 pub mod remote;
 pub mod share;
 pub mod sound;
+pub mod sync;

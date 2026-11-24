@@ -8,6 +8,7 @@
 use crate::engine::Event;
 use crate::library::{ReplayGain, Track};
 use crate::share::pairing_code;
+use crate::sync::lock;
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use rand::RngCore;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -127,7 +128,7 @@ impl ServerCertVerifier for Pin {
         _: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let print = hex(&Sha256::digest(end_entity.as_ref()));
-        *self.seen.lock().unwrap() = Some(print.clone());
+        *lock(&self.seen) = Some(print.clone());
         match &self.expected {
             Some(expected) if *expected != print => Err(rustls::Error::General(
                 "this is not the device that was paired".into(),
@@ -197,7 +198,7 @@ impl Client {
         Some(Self { agent, seen })
     }
     fn seen(&self) -> Option<String> {
-        self.seen.lock().unwrap().clone()
+        lock(&self.seen).clone()
     }
 }
 
@@ -296,7 +297,7 @@ impl Remote {
     /// Adds a device as if Bonjour had found it (for tests).
     #[doc(hidden)]
     pub fn add_nearby(&self, id: &str, name: &str, addresses: Vec<(Ipv4Addr, u16)>) {
-        self.state.lock().unwrap().nearby.insert(
+        lock(&self.state).nearby.insert(
             id.to_string(),
             Nearby {
                 id: id.to_string(),
@@ -308,7 +309,7 @@ impl Remote {
 
     /// The player's event channel, so a finished download can tell it to carry on.
     pub fn set_events(&self, events: Sender<Event>) {
-        *self.events.lock().unwrap() = Some(events);
+        *lock(&self.events) = Some(events);
     }
 
     fn changed(&self) {
@@ -336,27 +337,27 @@ impl Remote {
 
     fn start(self: &Arc<Self>) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = lock(&self.state);
             if state.running {
                 return;
             }
             state.running = true;
         }
         let Ok(daemon) = ServiceDaemon::new() else {
-            self.state.lock().unwrap().running = false;
+            lock(&self.state).running = false;
             return;
         };
         let Ok(events) = daemon.browse(SERVICE) else {
-            self.state.lock().unwrap().running = false;
+            lock(&self.state).running = false;
             return;
         };
-        *self.daemon.lock().unwrap() = Some(daemon);
+        *lock(&self.daemon) = Some(daemon);
         let me = self.clone();
         thread::Builder::new()
             .name("xciter-find".into())
             .spawn(move || {
                 while let Ok(event) = events.recv() {
-                    if !me.state.lock().unwrap().running {
+                    if !lock(&me.state).running {
                         break;
                     }
                     match event {
@@ -389,7 +390,7 @@ impl Remote {
                                 addresses,
                             };
                             let paired = {
-                                let mut state = me.state.lock().unwrap();
+                                let mut state = lock(&me.state);
                                 let new = state.nearby.get(&id) != Some(&found);
                                 state.nearby.insert(id.clone(), found);
                                 new && state.paired.iter().any(|h| h.id == id)
@@ -401,7 +402,7 @@ impl Remote {
                             }
                         }
                         ServiceEvent::ServiceRemoved(_, fullname) => {
-                            let mut state = me.state.lock().unwrap();
+                            let mut state = lock(&me.state);
                             let name = fullname
                                 .strip_suffix(&format!(".{SERVICE}"))
                                 .unwrap_or(&fullname)
@@ -430,7 +431,7 @@ impl Remote {
             .name("xciter-heartbeat".into())
             .spawn(move || loop {
                 thread::sleep(Duration::from_secs(15));
-                if !me.state.lock().unwrap().running {
+                if !lock(&me.state).running {
                     break;
                 }
                 me.heartbeat();
@@ -440,7 +441,7 @@ impl Remote {
 
     /// Stops looking and forgets what was found; the pairings stay.
     fn stop(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         if !state.running {
             return;
         }
@@ -450,7 +451,7 @@ impl Remote {
         state.address.clear();
         state.pairing = None;
         drop(state);
-        if let Some(daemon) = self.daemon.lock().unwrap().take() {
+        if let Some(daemon) = lock(&self.daemon).take() {
             let _ = daemon.shutdown();
         }
         self.changed();
@@ -458,7 +459,7 @@ impl Remote {
 
     fn heartbeat(self: &Arc<Self>) {
         let hosts: Vec<String> = {
-            let state = self.state.lock().unwrap();
+            let state = lock(&self.state);
             state
                 .nearby
                 .keys()
@@ -467,7 +468,7 @@ impl Remote {
                 .collect()
         };
         for id in hosts {
-            let online = self.state.lock().unwrap().online.contains(&id);
+            let online = lock(&self.state).online.contains(&id);
             if !online {
                 self.connect(&id);
                 continue;
@@ -479,7 +480,7 @@ impl Remote {
                         .and_then(|v| v["libraryVersion"].as_u64())
                         .unwrap_or(0);
                     let stale = {
-                        let mut state = self.state.lock().unwrap();
+                        let mut state = lock(&self.state);
                         let old = state.versions.insert(id.clone(), version);
                         old != Some(version)
                     };
@@ -488,7 +489,7 @@ impl Remote {
                     }
                 }
                 Err(_) => {
-                    let mut state = self.state.lock().unwrap();
+                    let mut state = lock(&self.state);
                     state.online.remove(&id);
                     state.address.remove(&id);
                     drop(state);
@@ -503,7 +504,7 @@ impl Remote {
     /// The first of a device's addresses that answers.
     fn reach(&self, id: &str, client: &Client) -> Option<(Ipv4Addr, u16)> {
         let (known, found) = {
-            let state = self.state.lock().unwrap();
+            let state = lock(&self.state);
             (
                 state.address.get(id).copied(),
                 state
@@ -522,11 +523,7 @@ impl Remote {
                 .call()
                 .is_ok()
             {
-                self.state
-                    .lock()
-                    .unwrap()
-                    .address
-                    .insert(id.to_string(), (ip, port));
+                lock(&self.state).address.insert(id.to_string(), (ip, port));
                 return Some((ip, port));
             }
         }
@@ -534,9 +531,7 @@ impl Remote {
     }
 
     fn host_of(&self, id: &str) -> Option<PairedHost> {
-        self.state
-            .lock()
-            .unwrap()
+        lock(&self.state)
             .paired
             .iter()
             .find(|h| h.id == id)
@@ -558,7 +553,7 @@ impl Remote {
         let host = self.host_of(id).ok_or("not paired")?;
         let client = Client::new(Some(host.fingerprint.clone()), Duration::from_secs(60))
             .ok_or("no secure connection")?;
-        let known = self.state.lock().unwrap().address.get(id).copied();
+        let known = lock(&self.state).address.get(id).copied();
         let (ip, port) = match known {
             Some(found) => found,
             None => self.reach(id, &client).ok_or("not reachable")?,
@@ -575,7 +570,7 @@ impl Remote {
                 Err("unpaired".into())
             } // the other device removed this one
             Err(error) => {
-                self.state.lock().unwrap().address.remove(id);
+                lock(&self.state).address.remove(id);
                 Err(error.to_string())
             }
         }
@@ -632,7 +627,7 @@ impl Remote {
             let _ = fs::write(self.dir.join(format!("remote-{id}.json")), data);
         }
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = lock(&self.state);
             for (track_id, ext) in extensions {
                 state.extensions.insert(track_id, ext);
             }
@@ -645,7 +640,7 @@ impl Remote {
     /// Reads every online device's library again.
     pub fn refresh(self: &Arc<Self>) {
         let ids: Vec<String> = {
-            let state = self.state.lock().unwrap();
+            let state = lock(&self.state);
             state.online.iter().cloned().collect()
         };
         for id in ids {
@@ -657,11 +652,11 @@ impl Remote {
     // ---- Pairing -------------------------------------------------------------------------------------------------
 
     pub fn pairing(&self) -> Option<Pairing> {
-        self.state.lock().unwrap().pairing.clone()
+        lock(&self.state).pairing.clone()
     }
 
     pub fn cancel_pairing(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         state.pair_id += 1; // a pairing in flight finds it has been replaced and stops
         state.pairing = None;
         drop(state);
@@ -670,11 +665,11 @@ impl Remote {
 
     /// Starts pairing with a device found nearby: asks it, shows the code, and waits for the person to choose Allow there.
     pub fn pair(self: &Arc<Self>, id: &str) {
-        let Some(found) = self.state.lock().unwrap().nearby.get(id).cloned() else {
+        let Some(found) = lock(&self.state).nearby.get(id).cloned() else {
             return;
         };
         let ticket = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = lock(&self.state);
             state.pair_id += 1;
             state.pairing = Some(Pairing::Connecting {
                 name: found.name.clone(),
@@ -690,10 +685,10 @@ impl Remote {
     }
 
     fn run_pairing(self: &Arc<Self>, found: Nearby, ticket: u64) {
-        let current = |me: &Remote| me.state.lock().unwrap().pair_id == ticket;
+        let current = |me: &Remote| lock(&me.state).pair_id == ticket;
         let fail = |me: &Remote, message: &str| {
             if current(me) {
-                me.state.lock().unwrap().pairing = Some(Pairing::Failed {
+                lock(&me.state).pairing = Some(Pairing::Failed {
                     name: found.name.clone(),
                     message: message.to_string(),
                 });
@@ -727,7 +722,7 @@ impl Remote {
         if !current(self) {
             return;
         }
-        self.state.lock().unwrap().pairing = Some(Pairing::Confirm {
+        lock(&self.state).pairing = Some(Pairing::Confirm {
             name: found.name.clone(),
             code,
         });
@@ -763,7 +758,7 @@ impl Remote {
             );
         };
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = lock(&self.state);
             state.paired.retain(|h| h.id != found.id);
             state.paired.push(PairedHost {
                 id: found.id.clone(),
@@ -783,7 +778,7 @@ impl Remote {
 
     /// Stops reading a device and forgets the pairing.
     pub fn forget(&self, id: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         state.paired.retain(|h| h.id != id);
         state.online.remove(id);
         state.address.remove(id);
@@ -799,7 +794,7 @@ impl Remote {
 
     /// Songs from every paired device that is in reach.
     pub fn tracks(&self) -> Vec<Track> {
-        let state = self.state.lock().unwrap();
+        let state = lock(&self.state);
         state
             .paired
             .iter()
@@ -810,15 +805,13 @@ impl Remote {
 
     pub fn track(&self, id: &str) -> Option<Track> {
         let (host, _) = split(id)?;
-        let state = self.state.lock().unwrap();
+        let state = lock(&self.state);
         state.songs.get(host)?.iter().find(|t| t.id == id).cloned()
     }
 
     /// The device's name, for "on <name>".
     pub fn host_name(&self, id: &str) -> String {
-        self.state
-            .lock()
-            .unwrap()
+        lock(&self.state)
             .paired
             .iter()
             .find(|h| h.id == id)
@@ -828,7 +821,7 @@ impl Remote {
 
     /// For the Settings page: who is nearby, who is paired and whether they answer.
     pub fn view(&self) -> serde_json::Value {
-        let state = self.state.lock().unwrap();
+        let state = lock(&self.state);
         let paired: Vec<_> = state.paired.iter().map(|h| json!({ "id": h.id, "name": h.name, "online": state.online.contains(&h.id), "songs": state.songs.get(&h.id).map(|s| s.len()).unwrap_or(0) })).collect();
         let mut nearby: Vec<_> = state
             .nearby
@@ -845,10 +838,7 @@ impl Remote {
     /// Where a song from another device is kept here (the file may not be there yet).
     pub fn path_of(&self, id: &str) -> Option<PathBuf> {
         let (host, song) = split(id)?;
-        let ext = self
-            .state
-            .lock()
-            .unwrap()
+        let ext = lock(&self.state)
             .extensions
             .get(id)
             .cloned()
@@ -868,7 +858,7 @@ impl Remote {
             .filter(|id| is_remote(id) && !self.is_cached(id))
             .collect();
         let wanted: Vec<String> = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = lock(&self.state);
             missing
                 .into_iter()
                 .filter(|id| state.fetching.insert(id.clone()))
@@ -883,8 +873,8 @@ impl Remote {
             .spawn(move || {
                 for id in wanted {
                     let ok = me.download(&id);
-                    me.state.lock().unwrap().fetching.remove(&id);
-                    if let Some(events) = me.events.lock().unwrap().as_ref() {
+                    lock(&me.state).fetching.remove(&id);
+                    if let Some(events) = lock(&me.events).as_ref() {
                         let _ = events.send(if ok {
                             Event::Fetched(id)
                         } else {
@@ -898,7 +888,7 @@ impl Remote {
     }
 
     pub fn is_fetching(&self, id: &str) -> bool {
-        self.state.lock().unwrap().fetching.contains(id)
+        lock(&self.state).fetching.contains(id)
     }
 
     fn download(&self, id: &str) -> bool {
@@ -1043,7 +1033,7 @@ mod tests {
         let music = host_dir.join("Song One.mp3");
         fs::write(&music, b"not really an mp3, but bytes all the same").unwrap();
         let host = Share::start(host_dir.clone(), "Test host".into(), true, move |request| {
-            let _ = asked.lock().unwrap().send(request);
+            let _ = lock(&asked).send(request);
         })
         .expect("share");
         host.set_library(&[Track {
@@ -1200,7 +1190,7 @@ mod tests {
         let other = setup("impostor");
         let (ip, port) = (Ipv4Addr::LOCALHOST, other.host.port());
         {
-            let mut state = p.remote.state.lock().unwrap();
+            let mut state = lock(&p.remote.state);
             state.nearby.get_mut(&p.host_id).unwrap().addresses = vec![(ip, port)];
             state.address.insert(p.host_id.clone(), (ip, port));
         }
@@ -1213,10 +1203,7 @@ mod tests {
     #[test]
     fn the_cache_name_never_leaves_the_cache_folder() {
         let remote = Remote::new(temp("names"), "me".into(), "Me".into(), || {});
-        remote
-            .state
-            .lock()
-            .unwrap()
+        lock(&remote.state)
             .extensions
             .insert("r:abc:def".into(), "../../x".into());
         let path = remote.path_of("r:abc:def").unwrap();
