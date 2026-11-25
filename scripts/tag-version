@@ -5,7 +5,6 @@
 #   version=1.2.0-beta.1   the app version (SemVer, as in tauri.conf.json)
 #   prerelease=true        a tag with a pre-release part is published as a GitHub pre-release
 #   msix=1.2.0.0           the Microsoft Store needs four numbers and no pre-release text
-#   msi=false              WiX rejects text pre-releases, so pre-releases get no .msi
 #
 # Exits 1 for a tag that is not `v` + SemVer (MAJOR.MINOR.PATCH, optional -PRE, no build metadata).
 set -eu
@@ -26,11 +25,10 @@ fi
 
 core=${version%%-*}
 case $version in
-    *-*) prerelease=true msi=false ;;
-    *) prerelease=false msi=true ;;
+    *-*) prerelease=true ;;
+    *) prerelease=false ;;
 esac
 
 echo "version=$version"
 echo "prerelease=$prerelease"
 echo "msix=$core.0"
-echo "msi=$msi"

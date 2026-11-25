@@ -16,12 +16,12 @@ expect_tag() {
         fail "tag-version $tag: got '$actual', expected '$expected'"
     fi
 }
-expect_tag v1.0.0 'version=1.0.0 prerelease=false msix=1.0.0.0 msi=true '
-expect_tag v1.2.3 'version=1.2.3 prerelease=false msix=1.2.3.0 msi=true '
-expect_tag v10.20.30 'version=10.20.30 prerelease=false msix=10.20.30.0 msi=true '
-expect_tag v1.0.0-beta.1 'version=1.0.0-beta.1 prerelease=true msix=1.0.0.0 msi=false '
-expect_tag v1.0.0-rc.2 'version=1.0.0-rc.2 prerelease=true msix=1.0.0.0 msi=false '
-expect_tag v0.1.1-rc.1 'version=0.1.1-rc.1 prerelease=true msix=0.1.1.0 msi=false '
+expect_tag v1.0.0 'version=1.0.0 prerelease=false msix=1.0.0.0 '
+expect_tag v1.2.3 'version=1.2.3 prerelease=false msix=1.2.3.0 '
+expect_tag v10.20.30 'version=10.20.30 prerelease=false msix=10.20.30.0 '
+expect_tag v1.0.0-beta.1 'version=1.0.0-beta.1 prerelease=true msix=1.0.0.0 '
+expect_tag v1.0.0-rc.2 'version=1.0.0-rc.2 prerelease=true msix=1.0.0.0 '
+expect_tag v0.1.1-rc.1 'version=0.1.1-rc.1 prerelease=true msix=0.1.1.0 '
 
 # tag-version: rejected tags.
 for tag in v1.0b v1.0 1.0.0 v01.0.0 v1.0.0+build.1 v1.0.0- v1.0.0-beta..1 vx.y.z ''; do

@@ -13,6 +13,7 @@ Spec: [`docs/specs/ci-release-builds.md`](../specs/ci-release-builds.md). Writte
 | D6 | Shared steps | One **composite action** `.github/actions/setup-build` (toolchain, caches, Node, Linux deps, desktop key) and two **reusable workflows** (`_gate.yml`, `_version.yml`). Each target keeps its own workflow file, as asked. | No six copies of the same 40 lines. |
 | D7 | Creating the release and checksums | Each target **uploads to a draft release**, creating it if it doesn't exist (race-safe script). `checksums.yml` runs when the maintainer **publishes** the draft: it writes `SHA256SUMS` from the final set of assets. | Separate workflow files can't depend on each other, and publishing is the one moment when the asset set is final. |
 | D8 | Build on `main` | Release profile, production desktop key, signed (decisions in the spec). Artifacts are named `xciter-<version>+<shortsha>-<target>`, kept for 14 days. | What's tested is what ships. |
+| D9 | Windows channel (2026-11-25) | **Microsoft Store only.** `build-windows.yml`, the `sign-windows` action and the `msi` version output are removed; Phase 5 is superseded. | No Windows certificate; the Store signs the MSIX, and an unsigned installer cannot be listed. |
 
 ## Ground rules
 - **Pinning:** every third-party action is pinned to a full commit SHA, with the version in a comment. Default `permissions: contents: read`; `contents: write` only on the steps that upload.

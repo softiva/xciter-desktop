@@ -2,15 +2,16 @@
 
 Builds run in GitHub Actions for **pushes to `main`** and for **release tags** (`v` + SemVer). Pull requests and other branches build nothing.
 
+Windows is distributed **only through the Microsoft Store**: there is no Windows installer on GitHub, and so no Windows code-signing certificate.
+
 | Workflow | Makes | On `main` | On a release tag |
 |---|---|---|---|
 | `build-macos.yml` | Universal `.dmg` + `.app.tar.gz`, signed and notarised | artifact | uploaded to the draft release |
-| `build-windows.yml` | NSIS `-setup.exe` (always) + `.msi` (stable versions only), signed | artifact | uploaded |
 | `build-deb.yml` | `.deb` (Debian 12+, Ubuntu 22.04+) | artifact | uploaded |
 | `build-rpm.yml` | `.rpm` (Fedora, RHEL 9, openSUSE) | artifact | uploaded |
 | `build-appimage.yml` | `.AppImage` (any x86_64 Linux) | artifact | uploaded |
 | `build-pacman.yml` | `.pkg.tar.zst` (Arch) | artifact | uploaded |
-| `build-msstore.yml` | `.msix` for the Microsoft Store | artifact | **submitted to the Store** (stable tags only) |
+| `build-msstore.yml` | `.msix` for the Microsoft Store (the only Windows build; Microsoft signs it) | artifact | **submitted to the Store** (stable tags only), not uploaded to GitHub |
 | `release.yml` | the draft GitHub Release | — | created when the tag is pushed |
 | `checksums.yml` | `SHA256SUMS` | — | added when you publish the release |
 
@@ -31,11 +32,11 @@ Each build first runs the quality gate (`_gate.yml`: fmt, clippy, tests, `cargo 
    git push origin v1.2.0
    ```
    A tag that differs from the version in the code fails every build (`scripts/version-info`).
-4. Wait for the seven build workflows. `release.yml` has already made a **draft** release, and each build uploads its files into it.
+4. Wait for the six build workflows. `release.yml` has already made a **draft** release, and each build uploads its files into it.
 5. Open **Releases**, review the draft (files, notes), and **Publish**. `checksums.yml` then adds `SHA256SUMS`.
 6. Microsoft Store (stable versions only): the build has submitted the package. Follow certification in Partner Center; it usually takes one to three days.
 
-A pre-release tag (`v1.2.0-rc.1`) makes a GitHub **pre-release** with no `.msi` (WiX cannot take a text pre-release) and nothing for the Store.
+A pre-release tag (`v1.2.0-rc.1`) makes a GitHub **pre-release** and nothing for the Store (its `.msix` is still built, as an artifact). The Store needs a higher four-number version for every submission, so never submit the same `X.Y.Z` twice.
 
 ### Re-running one target
 Open the failed workflow run and choose **Re-run failed jobs**. The upload replaces files of the same name. To build a target for a branch without a tag, use **Run workflow** (`workflow_dispatch`); that makes artifacts only.
@@ -61,14 +62,6 @@ Add these under **Settings → Secrets and variables → Actions**. Secrets are 
 | `APPLE_API_ISSUER` | secret | App Store Connect → Users and Access → Integrations → **App Store Connect API**: the Issuer ID. |
 | `APPLE_API_KEY` | secret | The Key ID of a team API key with the **Developer** role (made on that page). |
 | `APPLE_API_KEY_P8` | secret | The contents of the downloaded `AuthKey_<KEYID>.p8` file (it can be downloaded only once). |
-
-### Windows: code signing
-| Name | Kind | What |
-|---|---|---|
-| `WINDOWS_PFX_BASE64` | secret | The code-signing certificate with its private key as a `.pfx`, base64-encoded: `base64 -i cert.pfx` (macOS/Linux) or `[Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx'))` (PowerShell). |
-| `WINDOWS_PFX_PASSWORD` | secret | The `.pfx` password. |
-
-If the certificate lives in Azure Key Vault or Azure Artifact Signing instead of a `.pfx`, only `.github/actions/sign-windows` needs to change.
 
 ### Microsoft Store
 Do these once, in this order:

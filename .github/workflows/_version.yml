@@ -14,9 +14,6 @@ on:
       msix:
         description: The four-number version the Microsoft Store needs.
         value: ${{ jobs.version.outputs.msix }}
-      msi:
-        description: '"true" when an .msi can be built (WiX rejects text pre-releases).'
-        value: ${{ jobs.version.outputs.msi }}
       is_tag:
         description: '"true" for a release tag build.'
         value: ${{ jobs.version.outputs.is_tag }}
@@ -43,7 +40,6 @@ jobs:
       version: ${{ steps.info.outputs.version }}
       prerelease: ${{ steps.info.outputs.prerelease }}
       msix: ${{ steps.info.outputs.msix }}
-      msi: ${{ steps.info.outputs.msi }}
       is_tag: ${{ steps.info.outputs.is_tag }}
       tag: ${{ steps.info.outputs.tag }}
       label: ${{ steps.info.outputs.label }}

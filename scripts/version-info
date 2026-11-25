@@ -4,7 +4,7 @@
 #   scripts/version-info <git ref> <commit sha>
 #
 # Checks that the three version fields agree. On a tag (refs/tags/v...) the tag must equal that version.
-# Outputs version, prerelease, msix, msi, is_tag and label (what artifact names carry: the version, plus
+# Outputs version, prerelease, msix, is_tag, tag and label (what artifact names carry: the version, plus
 # the short commit on branch builds).
 set -eu
 
