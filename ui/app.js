@@ -35,13 +35,15 @@ const artWatcher = new IntersectionObserver((entries) => {
   }
 }, { rootMargin: '300px' });
 
+const artKey = (el) => `${el.dataset.art}@${Number(el.dataset.size || 120)}`;
+function showArt(el, found) { el.style.backgroundImage = `url("${found}")`; el.classList.add('has'); }
 async function fillArt(el) {
   const id = el.dataset.art, size = Number(el.dataset.size || 120);
   if (!id) return;
-  const key = `${id}@${size}`;
+  const key = artKey(el);
   let found = artLoaded.get(key);
   if (found === undefined) { found = await api('art', { id, size }); if (found || !id.startsWith('r:')) artLoaded.set(key, found); }
-  if (el.dataset.art === id && found) { el.style.backgroundImage = `url("${found}")`; el.classList.add('has'); }
+  if (el.dataset.art === id && found) showArt(el, found);
 }
 // No artwork: a cover made from the album's name, the same colour and initials as on the phones.
 function coverHue(name) {
@@ -67,7 +69,13 @@ const art = (track, cls = '', style = '', size = 120) => {
   const name = track.album === 'Unknown album' ? track.title : track.album;
   return `<div class="art made ${cls}" data-art="${esc(track.id)}" data-size="${size}" style="background-color:${hsv(coverHue(name), 0.35, 0.5)};${style}"><span>${esc(coverInitials(name))}</span></div>`;
 };
-function watchArt(root = document) { root.querySelectorAll('.art[data-art]:not(.has)').forEach((el) => artWatcher.observe(el)); }
+// Artwork already loaded is shown at once, so redrawing a page never flashes the made-up cover.
+function watchArt(root = document) {
+  root.querySelectorAll('.art[data-art]:not(.has)').forEach((el) => {
+    const found = artLoaded.get(artKey(el));
+    if (found) showArt(el, found); else artWatcher.observe(el);
+  });
+}
 
 // ---- Screens ---------------------------------------------------------------------------------
 function show(page) {
@@ -113,7 +121,7 @@ function renderPlaying() {
         <div class="card hug">${upNext(st)}</div>
       </div>
     </div>`;
-  $('#compare').onclick = async () => { ui.comparing = !ui.comparing; await api('compare', { on: ui.comparing }); renderPlaying(); watchArt(); };
+  $('#compare').onclick = async () => { ui.comparing = !ui.comparing; await api('compare', { on: ui.comparing }); renderPlaying(); };
   $('#sleep').onclick = chooseSleepTimer;
   if ($('#addQueue')) $('#addQueue').onclick = addFolder;
   $('#effectsP').onclick = () => setSound({ effects_on: !ui.sound.effects_on }).then(renderPlaying);
@@ -121,9 +129,10 @@ function renderPlaying() {
   if ($('#retry')) $('#retry').onclick = () => api('retry_failed').then(refreshState);
   if ($('#skip')) $('#skip').onclick = () => api('skip_failed').then(refreshState);
   wireRows(page);
-  const edit = $('#edit'); if (edit) edit.onclick = () => { ui.editing = !ui.editing; renderPlaying(); watchArt(); };
+  const edit = $('#edit'); if (edit) edit.onclick = () => { ui.editing = !ui.editing; renderPlaying(); };
   page.querySelectorAll('[data-mv]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); const [from, to] = b.dataset.mv.split(',').map(Number); api('move_up_next', { from, to }).then(refreshState); });
   page.querySelectorAll('[data-rm]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); api('remove_up_next', { id: b.dataset.rm }).then(refreshState); });
+  watchArt(page);
 }
 
 function chooseSleepTimer() {
@@ -142,10 +151,10 @@ setInterval(() => { const t = $('#sleepText'); if (t) t.textContent = sleepWords
 
 function setSleepTimer(minutes) {
   clearTimeout(sleepTimeout); ui.sleepMinutes = minutes; ui.sleepEnd = minutes ? Date.now() + minutes * 60000 : 0; closeDialog();
-  if (!minutes) { notice('Sleep timer off'); renderPlaying(); watchArt(); return; }
+  if (!minutes) { notice('Sleep timer off'); renderPlaying(); return; }
   notice(`Music will pause in ${minutes} minutes`);
   sleepTimeout = setTimeout(async () => { await api('pause'); ui.sleepMinutes = 0; ui.sleepEnd = 0; await refreshState(); notice('Sleep timer finished'); }, minutes * 60000);
-  renderPlaying(); watchArt();
+  renderPlaying();
 }
 
 function upNext(st) {
@@ -764,7 +773,7 @@ async function refreshState() {
   const key = (s) => s ? JSON.stringify([s.current && s.current.id, s.playing, s.shuffle, s.repeat, s.failed, s.fetching, s.up_next.map((t) => t.id)]) : '';
   const queue = (s) => s ? JSON.stringify([s.current && s.current.id, s.up_next.map((t) => t.id)]) : '';
   if (!ui.suggestions || queue(previous) !== queue(ui.state)) [ui.suggestions, ui.history] = await Promise.all([api('suggestions'), api('play_history')]);
-  if (key(previous) !== key(ui.state)) { renderBar(); if (ui.page === 'playing') { renderPlaying(); watchArt(); } else if (ui.page === 'library') markCurrent(); }
+  if (key(previous) !== key(ui.state)) { renderBar(); if (ui.page === 'playing') { renderPlaying(); } else if (ui.page === 'library') markCurrent(); }
   else updatePosition();
 }
 function markCurrent() { const id = ui.state.current && ui.state.current.id; document.querySelectorAll('#page .song').forEach((row) => { const b = row.querySelector('[data-more]'); if (b) row.classList.toggle('now', b.dataset.more === id); }); }
