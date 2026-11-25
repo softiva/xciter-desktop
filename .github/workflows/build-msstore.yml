@@ -142,7 +142,9 @@ jobs:
 
   submit:
     name: Submit to the Microsoft Store
-    if: needs.version.outputs.is_tag == 'true' && needs.version.outputs.prerelease == 'false'
+    # The Store CLI cannot make an app's first submission, so this stays off (repository variable MSSTORE_SUBMIT unset)
+    # until the first version, submitted by hand in Partner Center, is live. Then set MSSTORE_SUBMIT to true.
+    if: needs.version.outputs.is_tag == 'true' && needs.version.outputs.prerelease == 'false' && vars.MSSTORE_SUBMIT == 'true'
     needs: [version, build]
     runs-on: windows-2025
     timeout-minutes: 30
