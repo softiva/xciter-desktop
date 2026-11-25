@@ -1,5 +1,6 @@
 # macOS disk image (.dmg) and app archive (.app.tar.gz): one universal app for Apple Silicon and Intel,
-# signed with the Developer ID certificate and notarised by Apple, then checked with Gatekeeper.
+# signed with the Developer ID certificate. The app and the disk image are each notarised by Apple
+# and checked with Gatekeeper.
 # Tauri imports the certificate into a temporary keychain itself (APPLE_CERTIFICATE).
 name: macOS
 
@@ -76,6 +77,13 @@ jobs:
           trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
           (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" >"$APPLE_API_KEY_PATH")
           cd app && ../node_modules/.bin/tauri build --target universal-apple-darwin --bundles app,dmg -- --locked
+          # Tauri notarises the app but not the disk image around it. Gatekeeper rejects a downloaded
+          # disk image that is signed but not notarised, so the image is notarised and stapled too.
+          cd ..
+          dmg=$(ls "$BUNDLE"/dmg/*.dmg)
+          xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" --wait --timeout 30m
+          xcrun stapler staple "$dmg"
 
       - name: Check the signature, notarisation and architectures
         run: |
@@ -88,6 +96,8 @@ jobs:
           spctl --assess --type execute --verbose=4 "$app"
           xcrun stapler validate "$app"
           codesign --verify --verbose=2 "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+          xcrun stapler validate "$dmg"
           archs=$(lipo -archs "$app/Contents/MacOS/xciter")
           echo "architectures: $archs"
           [[ "$archs" == *x86_64* && "$archs" == *arm64* ]] || { echo "::error::not universal"; exit 1; }
