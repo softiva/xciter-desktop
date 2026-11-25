@@ -43,9 +43,19 @@ jobs:
       - name: Build the .rpm
         env:
           XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           if [ -z "$XCITER_DESKTOP_KEY" ]; then echo "::error::The XCITER_DESKTOP_KEY secret is not set"; exit 1; fi
-          cd app && ../node_modules/.bin/tauri build --bundles rpm -- --locked
+          # RPM versions cannot contain '-'. A pre-release (1.2.0-rc.1) is packaged the Fedora way, as version
+          # 1.2.0 with release 0.rc.1, which sorts before the final 1.2.0-1.
+          set -- --bundles rpm
+          case $VERSION in
+            *-*)
+              pre=$(printf '%s' "${VERSION#*-}" | tr -- - .)
+              set -- "$@" --config "{\"version\":\"${VERSION%%-*}\",\"bundle\":{\"linux\":{\"rpm\":{\"release\":\"0.$pre\"}}}}"
+              ;;
+          esac
+          cd app && ../node_modules/.bin/tauri build "$@" -- --locked
 
       - name: Check the package
         env:
