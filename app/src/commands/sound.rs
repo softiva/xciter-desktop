@@ -93,7 +93,15 @@ mod tests {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/constants.json");
         // Through `Value`, whose keys are sorted, so the snapshot does not depend on field order.
-        let value = serde_json::to_value(constants()).expect("serialisable");
+        let mut value = serde_json::to_value(constants()).expect("serialisable");
+        // The version changes with every release, so it is checked here and left out of the snapshot.
+        let version = value["version"].as_str().expect("version is a string");
+        assert!(
+            version.starts_with(env!("CARGO_PKG_VERSION")),
+            "`constants` shows version {version}, not {}",
+            env!("CARGO_PKG_VERSION")
+        );
+        value["version"] = serde_json::Value::from("<version>");
         let actual = serde_json::to_string_pretty(&value).expect("serialisable") + "\n";
         if std::env::var_os("GOLDEN_RECORD").is_some() {
             std::fs::create_dir_all(path.parent().expect("has a parent"))
