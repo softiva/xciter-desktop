@@ -45,7 +45,8 @@ Every release on the [Releases](../../releases) page has:
   - any other distribution: `.AppImage`
 - `SHA256SUMS`, to check the downloads.
 
-On Windows, install Xciter from the Microsoft Store (x64); there is no Windows download here.
+On Windows, install Xciter from the [Microsoft Store](https://apps.microsoft.com/detail/9PCTG26SJVG8) (x64); there is no Windows download here.
+The phone apps are on the [App Store](https://apps.apple.com/app/xciter/id6832859016) (iPhone); Google Play is coming. More at [softiva.app/xciter](https://softiva.app/xciter).
 
 They are built by GitHub Actions from release tags; [`docs/release.md`](docs/release.md) explains how to cut a release.
 
