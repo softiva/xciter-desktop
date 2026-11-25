@@ -11,7 +11,7 @@ Windows is distributed **only through the Microsoft Store**: there is no Windows
 | `build-rpm.yml` | `.rpm` (Fedora, RHEL 9, openSUSE) | artifact | uploaded |
 | `build-appimage.yml` | `.AppImage` (any x86_64 Linux) | artifact | uploaded |
 | `build-pacman.yml` | `.pkg.tar.zst` (Arch) | artifact | uploaded |
-| `build-msstore.yml` | `.msix` for the Microsoft Store (the only Windows build; Microsoft signs it) | artifact | **submitted to the Store** (stable tags only), not uploaded to GitHub |
+| `build-msstore.yml` | `.msix` for the Microsoft Store (the only Windows build; Microsoft signs it) | artifact | **submitted to the Store** (stable tags, once `MSSTORE_SUBMIT` is `true`), not uploaded to GitHub |
 | `release.yml` | the draft GitHub Release | — | created when the tag is pushed |
 | `checksums.yml` | `SHA256SUMS` | — | added when you publish the release |
 
@@ -34,7 +34,7 @@ Each build first runs the quality gate (`_gate.yml`: fmt, clippy, tests, `cargo 
    A tag that differs from the version in the code fails every build (`scripts/version-info`).
 4. Wait for the six build workflows. `release.yml` has already made a **draft** release, and each build uploads its files into it.
 5. Open **Releases**, review the draft (files, notes), and **Publish**. `checksums.yml` then adds `SHA256SUMS`.
-6. Microsoft Store (stable versions only): the build has submitted the package. Follow certification in Partner Center; it usually takes one to three days.
+6. Microsoft Store (stable versions only, once `MSSTORE_SUBMIT` is `true`): the build has submitted the package. Follow certification in Partner Center; it usually takes one to three days.
 
 A pre-release tag (`v1.2.0-rc.1`) makes a GitHub **pre-release** and nothing for the Store (its `.msix` is still built, as an artifact). The Store needs a higher four-number version for every submission, so never submit the same `X.Y.Z` twice.
 
@@ -90,7 +90,7 @@ Do these once, in this order:
    - create the submission in Partner Center (pricing: free; properties; age rating; Store listing with description, screenshots, and the privacy policy URL https://softiva.app/xciter);
    - upload the `.msix` and submit.
 
-   After it is certified and live, later stable tags submit by themselves. The Store certification may ask why the app needs `runFullTrust` (it is a desktop app reading music folders the person picks) and local network access (finding and sharing with the person's other devices).
+   After it is certified and live, set the repository variable `MSSTORE_SUBMIT` to `true` (Settings → Secrets and variables → Actions → Variables); from then on stable tags submit by themselves. Until then the submit job is skipped, and the `.msix` is only an artifact of the Microsoft Store run. Before a tag is pushed, there must be no submission in progress that was started in Partner Center, or the CLI refuses to upload. The Store certification may ask why the app needs `runFullTrust` (it is a desktop app reading music folders the person picks) and local network access (finding and sharing with the person's other devices).
 
 ### Repository settings
 - **Settings → Actions → General → Workflow permissions:** "Read repository contents" is enough; the workflows ask for write access only where they upload.
