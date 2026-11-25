@@ -16,6 +16,10 @@ pub(super) const OFFLINE: &str =
     "Xciter could not reach the license server. Check your internet connection and try again.";
 pub(super) const UNTRUSTED: &str =
     "The license server's answer could not be checked. Try again, or update Xciter.";
+pub(super) const NOT_REAL: &str = "Xciter could not confirm this is the real app.";
+/// Only a development build can have no desktop key (a release build without one does not compile).
+pub(super) const NO_DESKTOP_KEY: &str = "This development build has no desktop key, so the license server turns it away. \
+     Put the stage key in .keys/desktop-stage.key (debug builds use the stage server), or test license keys in a release build.";
 
 /// The license on this computer: the saved key and token, and the server to check them with.
 pub struct License {
@@ -169,7 +173,12 @@ impl License {
                 let code = value["error"].as_str().unwrap_or("server").to_string();
                 // 401 means the signature or the key is wrong: this build is not one the server accepts.
                 let message = if code == "unauthorized" {
-                    "Xciter could not confirm this is the real app.".to_string()
+                    if self.config.desktop_key.is_empty() {
+                        NO_DESKTOP_KEY
+                    } else {
+                        NOT_REAL
+                    }
+                    .to_string()
                 } else {
                     value["message"]
                         .as_str()

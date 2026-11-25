@@ -213,6 +213,14 @@ fn with_a_desktop_key_every_call_is_signed_and_a_server_that_wants_it_accepts_th
         }
         other => panic!("{other:?}"),
     }
+    // A development build with no key at all is told so, instead of being called fake.
+    rig.desktop_key = String::new();
+    match rig.open().activate(KEY) {
+        Outcome::Failed { message, .. } => {
+            assert!(message.starts_with("This development build has no desktop key"))
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

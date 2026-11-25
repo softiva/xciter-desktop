@@ -509,7 +509,7 @@ function renderSettings() {
       <div class="count" style="margin-top:6px">Xciter scans these folders automatically while it is open. Removing one here never deletes your files.<span id="scanStatus">${ui.lastScan ? ` Last checked ${ui.lastScan.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : ''}</span></div>
     </div>
     <div class="card">
-      <div class="row-between"><span class="label">Share with my devices</span>${ui.share.locked ? '<span class="chip soft">Pro</span>' : `<button class="pill ${ui.share.enabled ? 'on' : ''}" id="shareP" aria-label="Share with my devices">${ui.share.enabled ? 'On' : 'Off'}</button>`}</div>
+      <div class="row-between"><span class="label">Share with my devices</span>${ui.share.locked ? '<span class="chip soft">Needs Pro</span>' : `<button class="pill ${ui.share.enabled ? 'on' : ''}" id="shareP" aria-label="Share with my devices">${ui.share.enabled ? 'On' : 'Off'}</button>`}</div>
       <div class="count" style="margin-top:6px">${!ui.share.available ? 'Sharing could not start on this computer.' : ui.share.locked ? 'Sharing with your other devices is part of Xciter Pro. Enter your license key above and this computer can be found by your phones again.' : `Phones running Xciter on this network can ask to pair with ${esc(ui.share.name)}. Only devices you allow can see your music.`}</div>
       <div style="margin-top:6px">${ui.share.devices.map((d) => `<div class="folder"><span>${esc(d.name)}</span><button class="icon" data-device="${esc(d.id)}" aria-label="Unpair ${esc(d.name)}">${icon.close}</button></div>`).join('')}</div>
     </div>
@@ -838,7 +838,7 @@ function hostName(t) {
 }
 function devicesCard() {
   const d = ui.devices;
-  if (d.locked) return `<div class="row-between"><span class="label">Other devices</span><span class="chip soft">Pro</span></div><div class="count" style="margin-top:6px">With Xciter Pro this computer can find your other computers and play their music. Enter your license key above to turn it on.</div>`;
+  if (d.locked) return `<div class="row-between"><span class="label">Other devices</span><span class="chip soft">Needs Pro</span></div><div class="count" style="margin-top:6px">With Xciter Pro this computer can find your other computers and play their music. Enter your license key above to turn it on.</div>`;
   const paired = d.paired.map((h) => `<div class="folder"><span>${esc(h.name)} <span class="count">${h.online ? `${h.songs} ${h.songs === 1 ? 'song' : 'songs'}` : 'not nearby'}</span></span><button class="icon" data-forget="${esc(h.id)}" aria-label="Forget ${esc(h.name)}">${icon.close}</button></div>`).join('');
   const nearby = d.nearby.map((n) => `<div class="folder"><span>${esc(n.name)}</span><button class="button quiet" data-pairwith="${esc(n.id)}">Pair</button></div>`).join('');
   return `<div class="row-between"><span class="label">Other devices</span></div>
