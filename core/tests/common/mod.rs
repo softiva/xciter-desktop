@@ -1,8 +1,14 @@
 //! Helpers shared by the golden-output tests.
 //!
-//! A golden test runs a fixed, deterministic signal through a processor and hashes the exact bits of the
-//! output. The expected hashes live in `tests/golden/*.txt` and were recorded from the code before the
-//! refactor, so any change in the output, however small, fails the test.
+//! A golden test runs a fixed, deterministic signal through a processor and checks the output against
+//! `tests/golden/*.txt`, recorded from the code before the refactor. There are two kinds:
+//!
+//! - [`check`]: a hash of the exact bits. Used where the output does not depend on the platform's maths
+//!   library, so any change at all fails the test.
+//! - [`check_close`]: a [`fingerprint`] (block RMS and peak) compared with a relative tolerance. Used for the
+//!   filters, whose coefficients come from `exp`, `tan` and `pow`: their last bit differs between macOS and
+//!   Linux (glibc), so exact hashes cannot hold on both. A real change to the sound moves these numbers far
+//!   more than the tolerance.
 //!
 //! To record again after an *intended* change to the sound, run the test with `GOLDEN_RECORD=1`
 //! and review the diff of the `.txt` file.
@@ -80,6 +86,98 @@ pub fn signal(rate: usize, seconds: f64) -> (Vec<f32>, Vec<f32>) {
         right.push((level * (0.5 * tones + 0.3 * sweep - 0.2 * n)) as f32);
     }
     (left, right)
+}
+
+/// How many blocks [`fingerprint`] splits each channel into.
+const BLOCKS: usize = 16;
+
+/// The RMS of each of [`BLOCKS`] equal blocks of each channel, then each channel's peak: a summary that a
+/// real change to the sound moves, but the platform's last-bit rounding does not.
+pub fn fingerprint(left: &[f32], right: &[f32]) -> Vec<f64> {
+    let mut out = Vec::with_capacity(2 * BLOCKS + 2);
+    for channel in [left, right] {
+        let size = channel.len().div_ceil(BLOCKS).max(1);
+        for block in channel.chunks(size) {
+            let power: f64 = block.iter().map(|v| f64::from(*v).powi(2)).sum();
+            out.push((power / block.len() as f64).sqrt());
+        }
+    }
+    for channel in [left, right] {
+        out.push(
+            channel
+                .iter()
+                .fold(0.0f64, |m, v| m.max(f64::from(v.abs()))),
+        );
+    }
+    out
+}
+
+/// Relative tolerance for [`check_close`]; values below [`ABS_FLOOR`] count as equal to zero.
+const REL_TOLERANCE: f64 = 1e-4;
+const ABS_FLOOR: f64 = 1e-9;
+
+/// Compares computed fingerprints against the golden file within [`REL_TOLERANCE`], or writes it when
+/// `GOLDEN_RECORD` is set. Each line is `case | value value ...`.
+pub fn check_close(name: &str, computed: &BTreeMap<String, Vec<f64>>) {
+    let path = golden_path(name);
+    if std::env::var_os("GOLDEN_RECORD").is_some() {
+        let mut text = String::new();
+        for (case, values) in computed {
+            let values: Vec<String> = values.iter().map(|v| format!("{v:.9e}")).collect();
+            let _ = writeln!(text, "{case} | {}", values.join(" "));
+        }
+        std::fs::create_dir_all(path.parent().expect("golden dir has a parent"))
+            .expect("create golden dir");
+        std::fs::write(&path, text).expect("write golden file");
+        return;
+    }
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing golden file {}: {e} (run with GOLDEN_RECORD=1)",
+            path.display()
+        )
+    });
+    let expected: BTreeMap<String, Vec<f64>> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let (case, values) = l.split_once(" | ").expect("golden line is `case | values`");
+            let values = values
+                .split(' ')
+                .map(|v| v.parse().expect("golden value is a number"))
+                .collect();
+            (case.to_string(), values)
+        })
+        .collect();
+    let mut failures = Vec::new();
+    for (case, values) in computed {
+        let Some(want) = expected.get(case) else {
+            failures.push(format!("{case}: not in golden file"));
+            continue;
+        };
+        if want.len() != values.len() {
+            failures.push(format!(
+                "{case}: {} values, expected {}",
+                values.len(),
+                want.len()
+            ));
+            continue;
+        }
+        for (i, (got, want)) in values.iter().zip(want).enumerate() {
+            let diff = (got - want).abs();
+            if diff > ABS_FLOOR && diff > REL_TOLERANCE * got.abs().max(want.abs()) {
+                failures.push(format!("{case}[{i}]: expected {want:e}, got {got:e}"));
+            }
+        }
+    }
+    for case in expected.keys().filter(|c| !computed.contains_key(*c)) {
+        failures.push(format!("{case}: in golden file but not computed"));
+    }
+    assert!(
+        failures.is_empty(),
+        "output changed:\n{}",
+        failures.join("\n")
+    );
 }
 
 fn golden_path(name: &str) -> PathBuf {

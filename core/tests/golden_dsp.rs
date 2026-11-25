@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{check, signal, Fnv};
+use common::{check, check_close, fingerprint, signal, Fnv};
 use std::collections::BTreeMap;
 use xciter_core::dither::Dither;
 use xciter_core::dsp::{
@@ -58,17 +58,14 @@ fn effect_cases() -> Vec<(String, EffectSettings)> {
     cases
 }
 
-fn run_chain(settings: EffectSettings, rate: usize, limited: bool) -> u64 {
+fn run_chain(settings: EffectSettings, rate: usize, limited: bool) -> Vec<f64> {
     let (mut left, mut right) = signal(rate, SECONDS);
     let mut chain = EffectsChain::new(rate as f64);
     chain.configure(settings);
     for (l, r) in left.iter_mut().zip(right.iter_mut()) {
         chain.process(l, r, limited);
     }
-    let mut hash = Fnv::default();
-    hash.floats(&left);
-    hash.floats(&right);
-    hash.finish()
+    fingerprint(&left, &right)
 }
 
 #[test]
@@ -84,20 +81,17 @@ fn effects_chain_output_is_unchanged() {
             }
         }
     }
-    check("effects_chain", &computed);
+    check_close("effects_chain", &computed);
 }
 
-fn run_eq(curve: &[f32; BANDS], on: bool, headroom: bool, rate: usize) -> u64 {
+fn run_eq(curve: &[f32; BANDS], on: bool, headroom: bool, rate: usize) -> Vec<f64> {
     let (mut left, mut right) = signal(rate, SECONDS);
     let mut eq = GraphicEq::new(rate as f64);
     eq.configure(curve, on, headroom);
     for (l, r) in left.chunks_mut(512).zip(right.chunks_mut(512)) {
         eq.process(l, r);
     }
-    let mut hash = Fnv::default();
-    hash.floats(&left);
-    hash.floats(&right);
-    hash.finish()
+    fingerprint(&left, &right)
 }
 
 #[test]
@@ -114,7 +108,7 @@ fn graphic_eq_output_is_unchanged() {
         }
         computed.insert(format!("{rate}-off"), run_eq(&CURVES[1], false, true, rate));
     }
-    check("graphic_eq", &computed);
+    check_close("graphic_eq", &computed);
 }
 
 #[test]
