@@ -1,0 +1,45 @@
+#!/bin/sh
+# What a CI run builds, as key=value lines for $GITHUB_OUTPUT.
+#
+#   scripts/version-info <git ref> <commit sha>
+#
+# Checks that the three version fields agree. On a tag (refs/tags/v...) the tag must equal that version.
+# Outputs version, prerelease, msix, is_tag, tag and label (what artifact names carry: the version, plus
+# the short commit on branch builds).
+set -eu
+
+ref=${1:?usage: version-info <ref> <sha>}
+sha=${2:?usage: version-info <ref> <sha>}
+here=$(cd "$(dirname "$0")" && pwd)
+root=${ROOT:-$(cd "$here/.." && pwd)}
+
+tauri=$(awk -F'"' '/^  "version":/ { print $4; exit }' "$root/app/tauri.conf.json")
+core=$(awk -F'"' '/^version = / { print $2; exit }' "$root/core/Cargo.toml")
+app=$(awk -F'"' '/^version = / { print $2; exit }' "$root/app/Cargo.toml")
+if [ "$tauri" != "$core" ] || [ "$tauri" != "$app" ]; then
+    echo "version-info: versions disagree: tauri.conf.json=$tauri core=$core app=$app (run scripts/set-version)" >&2
+    exit 1
+fi
+
+case $ref in
+    refs/tags/*)
+        tag=${ref#refs/tags/}
+        info=$("$here/tag-version" "$tag")
+        tagged=$(printf '%s\n' "$info" | sed -n 's/^version=//p')
+        if [ "$tagged" != "$tauri" ]; then
+            echo "version-info: tag $tag says $tagged but the code says $tauri (run scripts/set-version $tagged, commit, re-tag)" >&2
+            exit 1
+        fi
+        printf '%s\n' "$info"
+        echo "is_tag=true"
+        echo "tag=$tag"
+        echo "label=$tauri"
+        ;;
+    *)
+        "$here/tag-version" "v$tauri" | grep -v '^version='
+        echo "version=$tauri"
+        echo "is_tag=false"
+        echo "tag="
+        echo "label=$tauri+$(printf '%s' "$sha" | cut -c1-7)"
+        ;;
+esac

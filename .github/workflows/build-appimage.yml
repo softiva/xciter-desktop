@@ -1,0 +1,98 @@
+# Portable Linux app (.AppImage), x86_64, for distributions without a package here. Built on Ubuntu 22.04,
+# the oldest glibc it supports. Runners have no FUSE, so the bundler runs AppImages extracted.
+name: Linux AppImage
+
+on:
+  push:
+    branches: [main]
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    uses: ./.github/workflows/_gate.yml
+
+  version:
+    uses: ./.github/workflows/_version.yml
+
+  build:
+    name: Build
+    needs: [gate, version]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-key: linux-release
+
+      - name: Build the AppImage
+        env:
+          XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          if [ -z "$XCITER_DESKTOP_KEY" ]; then echo "::error::The XCITER_DESKTOP_KEY secret is not set"; exit 1; fi
+          cd app && ../node_modules/.bin/tauri build --bundles appimage -- --locked
+
+      - name: Check the AppImage
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir dist
+          cp target/release/bundle/appimage/*.AppImage dist/
+          image=$(ls dist/*.AppImage)
+          case "$(basename "$image")" in
+            *"$VERSION"*) ;;
+            *) echo "::error::$(basename "$image") does not carry version $VERSION"; exit 1 ;;
+          esac
+          chmod +x "$image"
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$image" --appimage-extract >/dev/null
+          bin=$(find squashfs-root/usr/bin -maxdepth 1 -type f -iname 'xciter*' | head -1)
+          [ -n "$bin" ] || { echo "::error::no xciter binary in the AppImage"; ls -R squashfs-root/usr/bin; exit 1; }
+          echo "binary: $bin"
+          if ldd "$bin" | grep 'not found'; then echo "::error::missing libraries"; exit 1; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-appimage
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: Upload to the release
+    if: needs.version.outputs.is_tag == 'true'
+    needs: [version, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-appimage
+          path: dist
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: scripts/release-upload "$TAG" dist/*

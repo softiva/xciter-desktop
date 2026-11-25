@@ -1,0 +1,114 @@
+# Fedora/RHEL/openSUSE package (.rpm), x86_64. Built on Ubuntu 22.04 (old glibc, so it runs on current
+# Fedora and RHEL 9 alike) and installed in a clean Fedora container before it is released.
+name: Linux .rpm
+
+on:
+  push:
+    branches: [main]
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    uses: ./.github/workflows/_gate.yml
+
+  version:
+    uses: ./.github/workflows/_version.yml
+
+  build:
+    name: Build
+    needs: [gate, version]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-key: linux-release
+
+      - name: Build the .rpm
+        env:
+          XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
+        run: |
+          if [ -z "$XCITER_DESKTOP_KEY" ]; then echo "::error::The XCITER_DESKTOP_KEY secret is not set"; exit 1; fi
+          cd app && ../node_modules/.bin/tauri build --bundles rpm -- --locked
+
+      - name: Check the package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          sudo apt-get install -y --no-install-recommends rpm
+          mkdir dist
+          cp target/release/bundle/rpm/*.rpm dist/
+          rpm=$(ls dist/*.rpm)
+          rpm -qip "$rpm"
+          echo "package: $(rpm -qp --qf '%{NAME}' "$rpm")"
+          rpm -qp --requires "$rpm" | grep -q alsa-lib || { echo "::error::ALSA dependency missing"; exit 1; }
+          echo "rpm version: $(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$rpm") (app $VERSION)"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-rpm
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  install-test:
+    name: Install on Fedora
+    needs: [version, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    container: fedora:latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-rpm
+
+      - name: Install and check
+        run: |
+          rpm=$(ls ./*.rpm)
+          name=$(rpm -qp --qf '%{NAME}' "$rpm")
+          dnf install -y "$rpm"
+          rpm -qi "$name"
+          bin=$(rpm -ql "$name" | grep -m1 '/bin/')
+          [ -n "$bin" ] || { echo "::error::$name installs no binary"; exit 1; }
+          echo "binary: $bin"
+          if ldd "$bin" | grep 'not found'; then echo "::error::missing libraries"; exit 1; fi
+
+  publish:
+    name: Upload to the release
+    if: needs.version.outputs.is_tag == 'true'
+    needs: [version, install-test]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-rpm
+          path: dist
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: scripts/release-upload "$TAG" dist/*

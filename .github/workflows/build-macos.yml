@@ -1,0 +1,131 @@
+# macOS disk image (.dmg) and app archive (.app.tar.gz): one universal app for Apple Silicon and Intel,
+# signed with the Developer ID certificate and notarised by Apple, then checked with Gatekeeper.
+# Tauri imports the certificate into a temporary keychain itself (APPLE_CERTIFICATE).
+name: macOS
+
+on:
+  push:
+    branches: [main]
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    uses: ./.github/workflows/_gate.yml
+
+  version:
+    uses: ./.github/workflows/_version.yml
+
+  build:
+    name: Build, sign and notarise
+    needs: [gate, version]
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      BUNDLE: target/universal-apple-darwin/release/bundle
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-build
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          cache-key: macos-universal
+
+      - name: Check the secrets are set
+        env:
+          XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=0
+          for name in XCITER_DESKTOP_KEY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            if [ -z "${!name}" ]; then echo "::error::The $name secret is not set"; missing=1; fi
+          done
+          exit "$missing"
+
+      - name: Build, sign and notarise
+        env:
+          XCITER_DESKTOP_KEY: ${{ secrets.XCITER_DESKTOP_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+          export APPLE_API_KEY_PATH
+          trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
+          (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" >"$APPLE_API_KEY_PATH")
+          cd app && ../node_modules/.bin/tauri build --target universal-apple-darwin --bundles app,dmg -- --locked
+
+      - name: Check the signature, notarisation and architectures
+        run: |
+          app="$BUNDLE/macos/Xciter.app"
+          dmg=$(ls "$BUNDLE"/dmg/*.dmg)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          details=$(codesign -dv --verbose=2 "$app" 2>&1)
+          grep -q 'Authority=Developer ID Application' <<<"$details" || { echo "::error::not signed with a Developer ID Application certificate"; exit 1; }
+          grep -q 'flags=.*runtime' <<<"$details" || { echo "::error::hardened runtime is off"; exit 1; }
+          spctl --assess --type execute --verbose=4 "$app"
+          xcrun stapler validate "$app"
+          codesign --verify --verbose=2 "$dmg"
+          archs=$(lipo -archs "$app/Contents/MacOS/xciter")
+          echo "architectures: $archs"
+          [[ "$archs" == *x86_64* && "$archs" == *arm64* ]] || { echo "::error::not universal"; exit 1; }
+          plutil -extract NSLocalNetworkUsageDescription raw "$app/Contents/Info.plist"
+
+      - name: Collect
+        run: |
+          mkdir dist
+          cp "$BUNDLE"/dmg/*.dmg dist/
+          tar -C "$BUNDLE/macos" -czf "dist/Xciter_${{ needs.version.outputs.version }}_universal.app.tar.gz" Xciter.app
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-macos
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: Upload to the release
+    if: needs.version.outputs.is_tag == 'true'
+    needs: [version, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: xciter-${{ needs.version.outputs.label }}-macos
+          path: dist
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: scripts/release-upload "$TAG" dist/*

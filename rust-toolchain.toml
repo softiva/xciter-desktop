@@ -1,0 +1,4 @@
+# The toolchain for this repository, so CI and every laptop build and lint the same way.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,24 @@
+#!/bin/sh
+# Uploads files to the draft GitHub Release of a tag, replacing files of the same name.
+#
+#   scripts/release-upload v1.2.0 path/to/file...
+#
+# The draft is created by .github/workflows/release.yml as soon as the tag is pushed; builds take minutes
+# longer, so it is normally there already. This waits up to 10 minutes for it rather than creating one,
+# because parallel workflows creating it would make duplicate drafts. Needs GH_TOKEN.
+set -eu
+
+tag=${1:?usage: release-upload <tag> <file>...}
+shift
+[ $# -gt 0 ] || { echo "release-upload: no files given" >&2; exit 2; }
+
+tries=0
+until gh release view "$tag" --json tagName >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 60 ]; then
+        echo "release-upload: no release for $tag after 10 minutes; did release.yml run?" >&2
+        exit 1
+    fi
+    sleep 10
+done
+gh release upload "$tag" "$@" --clobber

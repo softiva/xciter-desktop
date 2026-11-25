@@ -33,6 +33,22 @@ cd app
 cargo test --workspace              # from the repository root: the tests
 ```
 
+## Downloads and releases
+
+Every release on the [Releases](../../releases) page has:
+
+- macOS: a universal `.dmg` for Apple Silicon and Intel (macOS 11 or later), signed and notarised.
+- Linux (x86_64):
+  - Debian and Ubuntu: `.deb`
+  - Fedora, RHEL and openSUSE: `.rpm`
+  - Arch: `.pkg.tar.zst`
+  - any other distribution: `.AppImage`
+- `SHA256SUMS`, to check the downloads.
+
+On Windows, install Xciter from the Microsoft Store (x64); there is no Windows download here.
+
+They are built by GitHub Actions from release tags; [`docs/release.md`](docs/release.md) explains how to cut a release.
+
 ## About Xciter Pro and the license server
 
 The desktop app is free. A license key bought in the Xciter mobile apps unlocks the network features by talking to Softiva's

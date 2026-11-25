@@ -30,6 +30,7 @@
       "msi",
       "nsis",
       "deb",
+      "rpm",
       "appimage"
     ],
     "icon": [
@@ -65,6 +66,11 @@
           "libasound2 | libasound2t64"
         ],
         "section": "sound"
+      },
+      "rpm": {
+        "depends": [
+          "alsa-lib"
+        ]
       }
     }
   }
