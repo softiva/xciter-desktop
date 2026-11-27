@@ -21,6 +21,8 @@ struct App {
     share: Option<Share>,
     remote: Arc<Remote>,
     license: Arc<License>,
+    /// The full window's size while the mini player is showing.
+    full_size: Mutex<Option<tauri::LogicalSize<f64>>>,
 }
 
 /// The player, locked for one command.
@@ -75,6 +77,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         share,
         remote,
         license: license.clone(),
+        full_size: Mutex::new(None),
     });
     check_license_while_open(app.handle().clone(), license);
     forward_player_events(app.handle().clone(), player, events);
@@ -171,7 +174,8 @@ fn main() {
             commands::license::license_activate,
             commands::license::license_remove,
             commands::license::license_deactivate,
-            commands::license::license_check
+            commands::license::license_check,
+            commands::window::set_mini
         ])
         .run(tauri::generate_context!())
         .expect("Xciter could not start");

@@ -6,3 +6,4 @@ pub mod license;
 pub mod playback;
 pub mod share;
 pub mod sound;
+pub mod window;

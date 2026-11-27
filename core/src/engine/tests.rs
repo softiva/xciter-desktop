@@ -1,6 +1,7 @@
 use super::*;
 use rtrb::RingBuffer;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 fn item(id: &str) -> Item {
     Item {
@@ -182,4 +183,34 @@ fn fill_rounds_to_16_bit_for_integer_cards() {
         &mut Dither::new(2, 48_000.0),
     );
     assert_eq!(out, [16_384, -16_384]);
+}
+
+/// Right after a seek the render thread still holds the old place; showing it sent the position bar back, then forward again.
+#[test]
+fn a_seek_is_reported_where_it_goes_until_the_render_thread_gets_there() {
+    let shared = Arc::new(playing());
+    shared.rate.store(48_000, Ordering::Relaxed);
+    shared.played.store(96_000, Ordering::Relaxed);
+    shared.marks.lock().unwrap().push(Mark {
+        frame: 0,
+        id: "0".into(),
+        seconds: 10.0,
+    });
+    let (commands, _kept) = std::sync::mpsc::channel();
+    let engine = Engine {
+        commands,
+        shared: shared.clone(),
+    };
+    assert_eq!(engine.now(), Some(("0".into(), 12.0)));
+    engine.start_plan(plan(1, false, false), 0, 90.0, true);
+    assert_eq!(engine.now(), Some(("0".into(), 90.0)));
+    // The render thread has carried it out: from here the marks say where the listener is.
+    shared.played.store(24_000, Ordering::Relaxed);
+    *shared.marks.lock().unwrap() = vec![Mark {
+        frame: 0,
+        id: "0".into(),
+        seconds: 90.0,
+    }];
+    shared.started.fetch_add(1, Ordering::Release);
+    assert_eq!(engine.now(), Some(("0".into(), 90.5)));
 }

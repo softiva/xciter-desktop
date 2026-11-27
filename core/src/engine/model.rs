@@ -131,6 +131,11 @@ pub(super) struct Shared {
     pub(super) sound: Mutex<SoundSnapshot>,
     pub(super) device: Mutex<String>,
     pub(super) last: Mutex<Option<(String, f64)>>,
+    /// How many starts have been asked for, and how many the render thread has carried out. While they differ, the marks and
+    /// `last` still describe the old place, so the listener is reported at `target`.
+    pub(super) requested: AtomicU64,
+    pub(super) started: AtomicU64,
+    pub(super) target: Mutex<Option<(String, f64)>>,
 }
 
 impl Shared {
@@ -149,6 +154,9 @@ impl Shared {
             sound: Mutex::new(SoundSnapshot::default()),
             device: Mutex::new("Speakers".into()),
             last: Mutex::new(None),
+            requested: AtomicU64::new(0),
+            started: AtomicU64::new(0),
+            target: Mutex::new(None),
         }
     }
 }

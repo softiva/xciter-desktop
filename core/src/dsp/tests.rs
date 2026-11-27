@@ -382,11 +382,10 @@ fn the_meter_sees_the_music_lined_up_with_the_output() {
 }
 
 #[test]
-fn headroom_off_turns_nothing_down() {
-    assert_eq!(
-        EffectSettings::new(1.0, 2500.0, 10.0, false).pre_gain(),
-        1.0
-    );
+fn headroom_off_turns_nothing_down_but_the_basses_own_share() {
+    assert_eq!(EffectSettings::new(1.0, 2500.0, 0.0, false).pre_gain(), 1.0);
+    let bass_only = EffectSettings::new(1.0, 2500.0, 10.0, false).pre_gain() as f64;
+    assert!((bass_only - 10f64.powf(-4.0 / 20.0)).abs() < 1e-4);
     assert_ne!(
         EffectSettings::new(1.0, 2500.0, 10.0, true),
         EffectSettings::new(1.0, 2500.0, 10.0, false)
@@ -709,4 +708,32 @@ fn output_never_passes_its_ceiling() {
     let mut r = l.clone();
     stage.process(&mut l, &mut r);
     assert!(l.iter().fold(0.0f32, |m, v| m.max(v.abs())) <= 0.981);
+}
+
+/// A loud modern master (peaks near full scale) leaves no room above it, so virtual bass takes its own even with headroom off.
+#[test]
+fn virtual_bass_is_heard_on_a_loud_master_with_headroom_off() {
+    for headroom in [true, false] {
+        let mut chain = EffectsChain::new(RATE as f64);
+        chain.configure(EffectSettings::new(0.0, 2500.0, 8.0, headroom));
+        let out: Vec<f32> = (0..RATE * 2)
+            .map(|i| {
+                let at = i as f64 / RATE as f64;
+                let mut l = (0.47 * (2.0 * PI * 60.0 * at).sin()
+                    + 0.51 * (2.0 * PI * 1000.0 * at).sin()) as f32;
+                let mut r = l;
+                chain.process(&mut l, &mut r, true);
+                l
+            })
+            .collect();
+        // Against the 1 kHz tone, which the bass leaves alone: the low note is lifted and its overtones are there.
+        let reference = level_at(&out, 1000.0, RATE);
+        let lift = 20.0 * (level_at(&out, 60.0, RATE) / reference / (0.47 / 0.51)).log10();
+        let overtone = level_at(&out, 120.0, RATE) / reference;
+        assert!(lift > 2.0, "headroom {headroom}: low note lifted {lift} dB");
+        assert!(
+            overtone > 0.05,
+            "headroom {headroom}: 120 Hz overtone {overtone}"
+        );
+    }
 }

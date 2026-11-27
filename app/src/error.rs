@@ -8,6 +8,9 @@ pub enum CommandError {
     /// The folder picked in the dialog has no usable path (for example a non-file URL on some systems).
     #[error("{0}")]
     FolderPath(String),
+    /// The system refused to change the window.
+    #[error("{0}")]
+    Window(#[from] tauri::Error),
 }
 
 impl Serialize for CommandError {

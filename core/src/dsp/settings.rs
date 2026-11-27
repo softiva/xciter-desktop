@@ -200,14 +200,17 @@ impl EffectSettings {
         self.exciter > 0.0 || self.bass_db > 0.0 || self.even > 0.0 || self.crystal > 0.0
     }
     /// Input scale: room for the exciter on the worst measured master, the Crystalizer's boost, and part of the bass boost.
+    /// The bass's share is taken even with headroom off: what virtual bass adds only goes in where it fits, and a loud master
+    /// leaves no room at all, so it would be silent.
     pub fn pre_gain(&self) -> f32 {
+        let for_bass = 10f64.powf((-self.bass_db * BASS_HEADROOM / 20.0) as f64) as f32;
         if !self.headroom {
-            return 1.0;
+            return for_bass;
         }
         let for_exciter = 1.0
             / (1.0
                 + EXCITER_PEAK[index(&EXCITER_HZ, self.exciter_hz)] * EXCITER_MAX * self.exciter);
         let for_crystal = 1.0 / (1.0 + 2.0 * CRYSTAL_MAX * self.crystal);
-        for_exciter * for_crystal * 10f64.powf((-self.bass_db * BASS_HEADROOM / 20.0) as f64) as f32
+        for_exciter * for_crystal * for_bass
     }
 }

@@ -161,6 +161,12 @@ impl Renderer {
         self.meter.reset();
         lock(&self.shared.marks).clear();
         lock(&self.shared.bars).clear();
+        // Until the first new sound is marked, the listener is where this start goes.
+        *lock(&self.shared.last) = self
+            .plan
+            .items
+            .get(position)
+            .map(|i| (i.id.clone(), seconds));
         self.wanted_playing = playing;
         self.shared.paused.store(!playing, Ordering::Relaxed);
         self.deck = None;
@@ -184,7 +190,11 @@ impl Renderer {
                     }
                     self.follow_device();
                 }
+                let counted = plan.items.get(position).is_some();
                 self.begin(plan, position, seconds, playing);
+                if counted {
+                    self.shared.started.fetch_add(1, Ordering::Release);
+                }
             }
             Command::Update(plan) => {
                 let id = self.deck.as_ref().map(|d| d.item.id.clone());

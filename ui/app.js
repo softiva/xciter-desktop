@@ -17,12 +17,14 @@ const icon = {
   more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
   close: '<svg viewBox="0 0 24 24"><path d="M6.4 5L12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></svg>',
   up: '<svg viewBox="0 0 24 24"><path d="M12 7l7 8H5z"/></svg>',
+  mini: '<svg viewBox="0 0 24 24"><path d="M3 4h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h16V6zm8 6h6v4h-6z"/></svg>',
+  full: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6h-2V7.4l-4.3 4.3-1.4-1.4L16.6 6H14zM4 14h2v2.6l4.3-4.3 1.4 1.4L7.4 18H10v2H4z"/></svg>',
   clock: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.1.8-1.3-4.5-2.7z"/></svg>',
   speaker: '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>',
 };
 
 const ui = { devices: { running: false, locked: true, nearby: [], paired: [], pairing: null }, license: { pro: false, expired: false, devices: [], limit: 4 }, keyDraft: '', keyShown: false, licenseBusy: false, licenseMessage: '', page: 'playing', songs: [], playlists: [], folders: [], sound: null, state: null, constants: null,
-  library: { tab: 1, term: '', detail: null, sort: 0 }, playlist: null, dragging: false, editing: false, sleepMinutes: 0, lastScan: null, scanning: false };
+  library: { tab: 1, term: '', detail: null, sort: 0 }, playlist: null, mini: false, dragging: false, editing: false, sleepMinutes: 0, lastScan: null, scanning: false };
 let sleepTimeout;
 
 // ---- Artwork, loaded as rows come into view -------------------------------------------------
@@ -78,6 +80,30 @@ function watchArt(root = document) {
 }
 
 // ---- Screens ---------------------------------------------------------------------------------
+/** An on/off switch, drawn the same as on the phones. */
+const toggle = (id, on, label) => `<button class="switch" id="${id}" role="switch" aria-checked="${!!on}" aria-label="${esc(label)}"></button>`;
+
+/** The soft light behind the cover, in the cover's own colour: the drawn cover's hue at once, the artwork's average once it is read. */
+async function glow(track) {
+  const el = $('#glow'); if (!el) return;
+  if (!track) { el.style.removeProperty('--glow'); return; }
+  const name = track.album === 'Unknown album' ? track.title : track.album;
+  el.style.setProperty('--glow', hsv(coverHue(name), 0.5, 0.55));
+  const key = `${track.id}@700`;
+  let found = artLoaded.get(key);
+  if (found === undefined) found = await api('art', { id: track.id, size: 700 }).catch(() => null);
+  if (!found) return;
+  const image = new Image();
+  image.onload = () => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0, 1, 1);
+    const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
+    if (el.isConnected) el.style.setProperty('--glow', `rgb(${r},${g},${b})`);
+  };
+  image.src = found;
+}
+
 function show(page) {
   ui.page = page;
   document.querySelectorAll('#rail button').forEach((b) => { const on = b.dataset.page === page; b.classList.toggle('on', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
@@ -86,52 +112,101 @@ function show(page) {
 
 function render() { ({ playing: renderPlaying, library: renderLibrary, playlists: renderPlaylists, sound: renderSound, settings: renderSettings })[ui.page](); watchArt(); api('set_meter', { wanted: ui.page === 'playing' }); }
 
-const statusWords = () => {
-  const s = ui.sound; if (!s) return '';
-  if (ui.comparing) return 'The original, at the same loudness';
-  if (!s.effects_on) return 'Effects off';
-  const exciter = s.exciter_on ? `Exciter ${Math.round(s.amount * 100)} % from ${(s.start_hz / 1000).toString()} kHz` : 'Exciter off';
-  return `${exciter} · ${s.bass_on ? `Bass ${Math.round(s.bass_db * 10)} %` : 'Bass off'}`;
-};
+/** The effects that are doing something, with their amounts. */
+function heardWords() {
+  const snd = ui.sound || {};
+  if (ui.comparing) return 'Hearing the original, at the same loudness';
+  if (!snd.effects_on) return 'All effects are off';
+  const on = [];
+  if (snd.exciter_on && snd.amount > 0) on.push(`Exciter ${Math.round(snd.amount * 100)}%`);
+  if (snd.bass_on && snd.bass_db > 0) on.push(`Bass ${Math.round(snd.bass_db * 10)}%`);
+  if (snd.crystal > 0) on.push(`Crystalizer ${Math.round(snd.crystal * 100)}%`);
+  if (snd.even > 0) on.push(`Even out ${Math.round(snd.even * 100)}%`);
+  return on.length ? on.join(' · ') : 'No effects chosen';
+}
+
+/** Under the meter: what is shaping the sound, and the few things chosen while listening. The amounts are set on the Sound page. */
+function soundChips() {
+  const snd = ui.sound || {};
+  const chip = (id, on, words, label) => `<button class="chip toggle ${on ? 'on' : ''}" id="${id}" aria-pressed="${!!on}" aria-label="${esc(label || words)}">${esc(words)}</button>`;
+  const options = (list, chosen) => list.map(([value, name]) => `<option value="${esc(value)}" ${chosen === value ? 'selected' : ''}>${esc(name)}</option>`).join('');
+  // "sound", so a Custom profile and a Custom equalizer curve side by side are not two identical lists.
+  const profile = `<span class="pick solo ${snd.effects_on ? 'on' : ''}"><select id="profileChip" aria-label="Sound profile">${options([['gentle', 'Gentle sound'], ['signature', 'Signature sound'], ['bold', 'Bold sound'], ['custom', 'Custom sound']], snd.profile)}</select></span>`;
+  // The equalizer: its switch, and beside it the preset in use, which is a list to choose another from.
+  const presets = [...((ui.constants || {}).presets || []), 'Custom'].map((p) => [p, presetLabel(p)]);
+  const equalizer = `<span class="joined">${chip('eqSwitch', snd.eq_on, 'EQ', 'Equalizer on or off')}<span class="pick ${snd.eq_on ? 'on' : ''}"><select id="presetChip" aria-label="Equalizer preset">${options(presets, snd.preset)}</select></span></span>`;
+  return `<button class="heard" id="heard" title="Open the Sound page"><span id="heardText">${esc(heardWords())}</span><span aria-hidden="true">›</span></button>`
+    + `<div class="chiprow">${profile}<span class="spacer"></span>${equalizer}</div>`
+    + '<div class="chiprow">' + chip('effectsP', snd.effects_on, snd.effects_on ? 'Effects on' : 'Effects off', 'All effects on or off')
+    + '<span class="spacer"></span>'
+    + chip('compare', ui.comparing, ui.comparing ? 'Original' : 'Hold to compare', 'Compare with the original') + '</div>';
+}
+
+/** The original plays while Compare is held. Only the chip is redrawn, so the finger is not left on a button that has gone. */
+function setCompare(on) {
+  if (!!ui.comparing === on) return;
+  ui.comparing = on;
+  api('compare', { on });
+  const chip = $('#compare');
+  if (chip) { chip.classList.toggle('on', on); chip.setAttribute('aria-pressed', on); chip.textContent = on ? 'Original' : 'Hold to compare'; }
+  const heard = $('#heardText'); if (heard) heard.textContent = heardWords();
+}
+
+/** After a switch or a preset only the chips are redrawn: redrawing the page would make the cover, its glow and Up next jump. */
+function redrawSoundChips() {
+  const chips = $('#spectrumCard .chips'); if (!chips) return;
+  const focused = document.activeElement && chips.contains(document.activeElement) ? document.activeElement.id : null;
+  chips.innerHTML = soundChips();
+  wireSoundChips();
+  if (focused) $(`#${focused}`)?.focus();
+}
+function wireSoundChips() {
+  const flip = (patch) => setSound(patch).then(redrawSoundChips);
+  $('#effectsP').onclick = () => flip({ effects_on: !ui.sound.effects_on });
+  $('#eqSwitch').onclick = () => flip({ eq_on: !ui.sound.eq_on });
+  $('#heard').onclick = () => show('sound');
+  // Choosing a profile means wanting to hear it, so it also switches the effects on.
+  $('#profileChip').onchange = async (e) => { ui.sound = await api('sound_profile', { name: e.target.value }); if (!ui.sound.effects_on) await setSound({ effects_on: true }); redrawSoundChips(); };
+  // Choosing a preset means wanting to hear it, so it also switches the equalizer on.
+  $('#presetChip').onchange = async (e) => { ui.sound = await api('sound_preset', { name: e.target.value }); if (!ui.sound.eq_on) await setSound({ eq_on: true }); redrawSoundChips(); };
+  const compare = $('#compare');
+  compare.onpointerdown = (e) => { if (e.button === 0) setCompare(true); };
+  // From the keyboard there is no holding, so there it switches over and back.
+  compare.onclick = (e) => { if (e.detail === 0) setCompare(!ui.comparing); };
+}
 
 function renderPlaying() {
   const page = $('#page'); page.className = 'fixed';
-  const st = ui.state || {}, t = st.current;
+  const st = ui.state || {}, t = st.current, shown = t || (ui.suggestions || [])[0];
   const format = t ? [t.kind, t.sample_rate ? `${(t.sample_rate / 1000).toFixed(1)} kHz` : ''].filter(Boolean).join(', ') : `${ui.songs.length} songs in your library`;
   page.innerHTML = `
-    <div class="head"><span class="grow"></span><button class="chip ${ui.sleepEnd ? 'on' : ''}" id="sleep" aria-label="Sleep timer">${icon.clock}<span id="sleepText">${sleepWords()}</span></button><span class="chip" id="outChip" title="Current audio output">${icon.speaker}<span id="outText">${esc(st.device || 'System audio')}</span></span></div>
     <div id="stage">
-      <div id="hero" class="card">
-        ${art(t || (ui.suggestions || [])[0], '', '', 700)}
-        <div><div class="label">${t ? 'Now playing' : 'Your music'}</div>
-        <div class="t">${esc(t ? t.title : 'Ready when you are')}</div>
-        <div class="s">${esc(t ? `${t.artist}, ${t.album}` : ui.songs.length ? 'Press play to shuffle your music' : 'Add a music folder to begin')}</div>
+      <div id="glow" aria-hidden="true"></div>
+      <div id="hero">
+        ${art(shown, '', '', 700)}
+        <div class="words"><div class="t">${esc(t ? t.title : 'Ready when you are')}</div>
+        <div class="s">${esc(t ? `${t.artist} · ${t.album}` : ui.songs.length ? 'Press play to shuffle your music' : 'Add a music folder to begin')}</div>
         <div class="f">${st.fetching ? `Getting this song from ${esc(st.fetching)}…` : st.failed ? `${t && t.id.startsWith('r:') ? `Couldn't get this song from ${esc(hostName(t))}` : "Can't play this file"} <button class="text-action" id="retry">Retry</button><button class="text-action" id="skip">Skip</button>` : esc(format)}</div></div>
       </div>
       <div id="side">
         <div class="card" id="spectrumCard">
-          <div class="pills"><button class="pill ${ui.comparing ? 'on' : ''}" id="compare" aria-pressed="${!!ui.comparing}" aria-label="Compare with the original">${ui.comparing ? 'Original' : 'Compare'}</button>
-          <span class="spacer"></span>
-          <button class="pill ${ui.sound && ui.sound.effects_on ? 'on' : ''}" id="effectsP" aria-pressed="${!!(ui.sound && ui.sound.effects_on)}" aria-label="Effects on or off">Effects</button>
-          <button class="pill ${ui.sound && ui.sound.eq_on ? 'on' : ''}" id="eqSwitch" aria-pressed="${!!(ui.sound && ui.sound.eq_on)}" aria-label="Equalizer on or off">EQ</button></div>
-          <div class="status">${esc(statusWords())}</div>
-          <canvas id="spectrum"></canvas>
-          <div class="hints"><span>Bass</span><span>What Xciter adds in champagne</span><span>Air</span></div>
+          <canvas id="spectrum" title="Adjust sound" role="button" tabindex="0" aria-label="Adjust sound"></canvas>
+          <div class="chips">${soundChips()}</div>
         </div>
         <div class="card hug">${upNext(st)}</div>
       </div>
     </div>`;
-  $('#compare').onclick = async () => { ui.comparing = !ui.comparing; await api('compare', { on: ui.comparing }); renderPlaying(); };
-  $('#sleep').onclick = chooseSleepTimer;
+  wireSoundChips();
+  $('#spectrum').onclick = () => show('sound');
+  $('#spectrum').onkeydown = (e) => { if (e.key === 'Enter') show('sound'); };
   if ($('#addQueue')) $('#addQueue').onclick = addFolder;
-  $('#effectsP').onclick = () => setSound({ effects_on: !ui.sound.effects_on }).then(renderPlaying);
-  $('#eqSwitch').onclick = () => setSound({ eq_on: !ui.sound.eq_on }).then(renderPlaying);
   if ($('#retry')) $('#retry').onclick = () => api('retry_failed').then(refreshState);
   if ($('#skip')) $('#skip').onclick = () => api('skip_failed').then(refreshState);
   wireRows(page);
   const edit = $('#edit'); if (edit) edit.onclick = () => { ui.editing = !ui.editing; renderPlaying(); };
   page.querySelectorAll('[data-mv]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); const [from, to] = b.dataset.mv.split(',').map(Number); api('move_up_next', { from, to }).then(refreshState); });
   page.querySelectorAll('[data-rm]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); api('remove_up_next', { id: b.dataset.rm }).then(refreshState); });
+  glow(shown);
   watchArt(page);
 }
 
@@ -141,9 +216,9 @@ function chooseSleepTimer() {
   $('#c', o).onclick = closeDialog;
 }
 
-// What the Timer chip says: its name, or the time left when it is running.
+// The time left on the sleep timer, or nothing when it is not running.
 function sleepWords() {
-  if (!ui.sleepEnd) return 'Timer';
+  if (!ui.sleepEnd) return '';
   const left = Math.max(0, Math.ceil((ui.sleepEnd - Date.now()) / 1000));
   return left >= 3600 ? `${Math.floor(left / 3600)}:${String(Math.floor(left / 60) % 60).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` : time(left);
 }
@@ -151,10 +226,10 @@ setInterval(() => { const t = $('#sleepText'); if (t) t.textContent = sleepWords
 
 function setSleepTimer(minutes) {
   clearTimeout(sleepTimeout); ui.sleepMinutes = minutes; ui.sleepEnd = minutes ? Date.now() + minutes * 60000 : 0; closeDialog();
-  if (!minutes) { notice('Sleep timer off'); renderPlaying(); return; }
+  if (!minutes) { notice('Sleep timer off'); renderBar(); return; }
   notice(`Music will pause in ${minutes} minutes`);
-  sleepTimeout = setTimeout(async () => { await api('pause'); ui.sleepMinutes = 0; ui.sleepEnd = 0; await refreshState(); notice('Sleep timer finished'); }, minutes * 60000);
-  renderPlaying();
+  sleepTimeout = setTimeout(async () => { await api('pause'); ui.sleepMinutes = 0; ui.sleepEnd = 0; await refreshState(); renderBar(); notice('Sleep timer finished'); }, minutes * 60000);
+  renderBar();
 }
 
 function upNext(st) {
@@ -321,63 +396,71 @@ function renderSound() {
   const names = ['Wide', 'Bite', 'Presence', 'Sparkle'], airNames = ['Warm', 'Clear', 'Bright', 'Airy'];
   const bandNames = ['Deep', 'Full', 'Tight', 'Firm'], keepNames = ['Low', 'Standard', 'Higher', 'Highest'];
   const choices = (values, current, key, names, unit) => `<div class="tiles">${values.map((v, i) => `<button class="tile ${current === v ? 'on' : ''}" data-choice="${key}" data-value="${v}">${unit === 'kHz' ? v / 1000 : v}<small>${names[i]}</small></button>`).join('')}</div>`;
-  const percent = (v) => (v === 0 ? 'Off' : `${Math.round(v * 100)} %`);
+  const percent = (v) => (v === 0 ? 'Off' : `${Math.round(v * 100)}%`);
+  // One card for each effect: its name, value and switch, then its slider.
+  const effect = (name, valueId, value, lit, switchId, on, slider, more = '') => `
+    <div class="card effect">
+      <div class="row-between"><span class="name">${name}</span><div class="right"><span class="value ${lit ? '' : 'off'}" id="${valueId}">${value}</span>${toggle(switchId, on, name)}</div></div>
+      ${slider}${more}
+    </div>`;
+  // The frequency choices fold away; the closed line says what is chosen.
+  const fine = (key, title, chosen, body) => {
+    const open = remembered(`tune_${key}`) === '1';
+    return `<button class="fine" data-tune="${key}" aria-expanded="${open}" aria-label="Fine tune ${title}"><span>Fine tune</span><span class="chosen">${chosen} ${open ? '▴' : '▾'}</span></button>${open ? `<div class="more">${body}</div>` : ''}`;
+  };
+  const profiles = [['gentle', 'Gentle', 'Smooth'], ['signature', 'Signature', 'Balanced'], ['bold', 'Bold', 'Powerful'], ['custom', 'Custom', 'Yours']];
   page.innerHTML = `
-    <div class="head"><span class="count grow">Saved for every song</span></div>
-    <div class="card"><span class="label">Sound profile</span><div class="tiles" id="profiles">${[['gentle', 'Gentle', 'Smooth'], ['signature', 'Signature', 'Balanced'], ['bold', 'Bold', 'Powerful'], ['custom', 'Custom', 'Yours']].map(([key, name, sub]) => `<button class="tile ${s.profile === key ? 'on' : ''}" data-profile="${key}" aria-pressed="${s.profile === key}">${name}<small>${sub}</small></button>`).join('')}</div></div>
+    <div class="head"><h1>Sound</h1><span class="grow"></span><span class="count">Saved for every song</span></div>
+    <div class="segmented" id="profiles" role="group" aria-label="Sound profile">${profiles.map(([key, name, sub]) => `<button class="${s.profile === key ? 'on' : ''}" data-profile="${key}" aria-pressed="${s.profile === key}" title="${sub}">${name}</button>`).join('')}</div>
     <div class="cols">
-      <div class="card">
-        <div class="row-between"><span class="label">Exciter</span><div class="right"><span class="value ${s.exciter_on ? '' : 'off'}" id="amountV">${Math.round(s.amount * 100)} %</span><button class="pill ${s.exciter_on ? 'on' : ''}" id="exciterP">${s.exciter_on ? 'On' : 'Off'}</button></div></div>
-        <input type="range" id="amount" min="0" max="100" step="5" value="${Math.round(s.amount * 100)}" aria-label="Exciter amount">
-        <div class="hints"><span>Subtle</span><span>Bold</span></div>
-        <div class="label" style="margin-top:10px">Processes from, kHz</div>
-        ${choices(c.exciterHz, s.start_hz, 'start_hz', names, 'kHz')}
-        <div class="label" style="margin-top:10px">Harmonics played from, kHz</div>
-        ${choices(c.airHz, s.air_hz, 'air_hz', airNames, 'kHz')}
-      </div>
-      <div class="card">
-        <div class="row-between"><span class="label">Virtual bass</span><div class="right"><span class="value ${s.bass_on ? '' : 'off'}" id="bassV">${Math.round(s.bass_db * 10)} %</span><button class="pill ${s.bass_on ? 'on' : ''}" id="bassP">${s.bass_on ? 'On' : 'Off'}</button></div></div>
-        <input type="range" id="bass" min="0" max="10" step="1" value="${Math.round(s.bass_db)}" aria-label="Virtual bass amount">
-        <div class="hints"><span>Light</span><span>Heavy</span></div>
-        <div class="label" style="margin-top:10px">Band from, Hz</div>
-        ${choices(c.bassBandHz, s.bass_band_hz, 'bass_band_hz', bandNames, 'Hz')}
-        <div class="label" style="margin-top:10px">Harmonics above, Hz</div>
-        ${choices(c.bassAirHz, s.bass_air_hz, 'bass_air_hz', keepNames, 'Hz')}
-      </div>
+      ${effect('Exciter', 'amountV', `${Math.round(s.amount * 100)}%`, s.exciter_on, 'exciterP', s.exciter_on,
+        `<input type="range" id="amount" min="0" max="100" step="5" value="${Math.round(s.amount * 100)}" aria-label="Exciter amount">`,
+        fine('exciter', 'Exciter', `${s.start_hz / 1000} kHz → ${s.air_hz / 1000} kHz`,
+          `<div class="label">Processes from, kHz</div>${choices(c.exciterHz, s.start_hz, 'start_hz', names, 'kHz')}<div class="label" style="margin-top:10px">Harmonics played from, kHz</div>${choices(c.airHz, s.air_hz, 'air_hz', airNames, 'kHz')}`))}
+      ${effect('Virtual bass', 'bassV', `${Math.round(s.bass_db * 10)}%`, s.bass_on, 'bassP', s.bass_on,
+        `<input type="range" id="bass" min="0" max="10" step="1" value="${Math.round(s.bass_db)}" aria-label="Virtual bass amount">`,
+        fine('bass', 'Virtual bass', `${s.bass_band_hz} Hz → ${s.bass_air_hz} Hz`,
+          `<div class="label">Band from, Hz</div>${choices(c.bassBandHz, s.bass_band_hz, 'bass_band_hz', bandNames, 'Hz')}<div class="label" style="margin-top:10px">Harmonics above, Hz</div>${choices(c.bassAirHz, s.bass_air_hz, 'bass_air_hz', keepNames, 'Hz')}`))}
+      ${effect('Crystalizer', 'crystalV', percent(s.crystal), s.crystal > 0, 'crystalP', s.crystal > 0,
+        `<input type="range" id="crystal" min="0" max="100" step="5" value="${Math.round(s.crystal * 100)}" aria-label="Crystalizer amount">`)}
+      ${effect('Even out', 'evenV', percent(s.even), s.even > 0, 'evenP', s.even > 0,
+        `<input type="range" id="even" min="0" max="100" step="5" value="${Math.round(s.even * 100)}" aria-label="Even out amount">`)}
     </div>
-    <div class="cols">
-      <div class="card">
-        <div class="row-between"><span class="label">Crystalizer</span><span class="value ${s.crystal === 0 ? 'off' : ''}" id="crystalV">${percent(s.crystal)}</span></div>
-        <input type="range" id="crystal" min="0" max="100" step="5" value="${Math.round(s.crystal * 100)}" aria-label="Crystalizer amount">
-        <div class="hints"><span>Off</span><span>Strong</span></div>
-        <div class="count" style="margin-top:6px">Crisper highs from a clean treble lift. It adds no harmonics, so it can't distort.</div>
-      </div>
-      <div class="card">
-        <div class="row-between"><span class="label">Even out</span><span class="value ${s.even === 0 ? 'off' : ''}" id="evenV">${percent(s.even)}</span></div>
-        <input type="range" id="even" min="0" max="100" step="5" value="${Math.round(s.even * 100)}" aria-label="Even out amount">
-        <div class="hints"><span>Off</span><span>Strong</span></div>
-        <div class="count" style="margin-top:6px">Lifts quiet passages and eases loud ones, so soft intros stay audible.</div>
-      </div>
-    </div>
-    <div class="card fill" style="min-height:360px">
-      <div class="row-between"><span class="label">Equalizer, 31 bands</span><div class="right"><select id="preset" aria-label="Equalizer preset">${[...c.presets, 'Custom'].map((p) => `<option value="${esc(p)}" ${s.preset === p ? 'selected' : ''}>${esc(presetLabel(p))}</option>`).join('')}</select><button class="pill ${s.eq_on ? 'on' : ''}" id="eqP">${s.eq_on ? 'On' : 'Off'}</button></div></div>
+    <div class="card fill effect" style="min-height:320px">
+      <div class="row-between"><span class="name">Equalizer</span><div class="right"><select id="preset" aria-label="Equalizer preset">${[...c.presets, 'Custom'].map((p) => `<option value="${esc(p)}" ${s.preset === p ? 'selected' : ''}>${esc(presetLabel(p))}</option>`).join('')}</select>${toggle('eqP', s.eq_on, 'Equalizer')}</div></div>
       <div class="eq-wrap"><canvas id="eq" tabindex="0" role="application" aria-label="31-band equalizer curve. Left and right choose a band, up and down change it."></canvas></div>
       <div class="hints"><span>Drag the curve, up to 6 dB each way</span></div>
     </div>`;
   fillRange($('#amount')); fillRange($('#bass')); fillRange($('#crystal')); fillRange($('#even'));
-  $('#amount').oninput = (e) => { fillRange(e.target); $('#amountV').textContent = `${e.target.value} %`; setSound({ amount: Number(e.target.value) / 100 }).then(markProfile); };
-  $('#bass').oninput = (e) => { fillRange(e.target); $('#bassV').textContent = `${Number(e.target.value) * 10} %`; setSound({ bass_db: Number(e.target.value) }).then(markProfile); };
+  $('#amount').oninput = (e) => { fillRange(e.target); $('#amountV').textContent = `${e.target.value}%`; setSound({ amount: Number(e.target.value) / 100 }).then(markProfile); };
+  $('#bass').oninput = (e) => { fillRange(e.target); $('#bassV').textContent = `${Number(e.target.value) * 10}%`; setSound({ bass_db: Number(e.target.value) }).then(markProfile); };
   for (const [id, key] of [['crystal', 'crystal'], ['even', 'even']]) {
-    $(`#${id}`).oninput = (e) => { fillRange(e.target); const v = Number(e.target.value) / 100; $(`#${id}V`).textContent = percent(v); $(`#${id}V`).classList.toggle('off', v === 0); setSound({ [key]: v }).then(markProfile); };
+    $(`#${id}`).oninput = (e) => {
+      fillRange(e.target);
+      const v = Number(e.target.value) / 100;
+      $(`#${id}V`).textContent = percent(v); $(`#${id}V`).classList.toggle('off', v === 0); $(`#${id}P`).setAttribute('aria-checked', v > 0);
+      setSound({ [key]: v }).then(markProfile);
+    };
+    // The switch: off remembers the amount, on brings it back (half, if there was none).
+    $(`#${id}P`).onclick = () => {
+      const now = ui.sound[key];
+      if (now > 0) remember(`${key}_last`, String(now));
+      setSound({ [key]: now > 0 ? 0 : Number(remembered(`${key}_last`)) || 0.5 }).then(renderSound);
+    };
   }
   $('#exciterP').onclick = () => setSound({ exciter_on: !s.exciter_on }).then(renderSound);
   $('#bassP').onclick = () => setSound({ bass_on: !s.bass_on }).then(renderSound);
   $('#eqP').onclick = () => setSound({ eq_on: !s.eq_on }).then(renderSound);
+  page.querySelectorAll('[data-tune]').forEach((b) => b.onclick = () => { const key = `tune_${b.dataset.tune}`; remember(key, remembered(key) === '1' ? '0' : '1'); renderSound(); });
   page.querySelectorAll('[data-choice]').forEach((b) => b.onclick = () => setSound({ [b.dataset.choice]: Number(b.dataset.value) }).then(renderSound));
   $('#preset').onchange = async (e) => { ui.sound = await api('sound_preset', { name: e.target.value }); renderSound(); };
   page.querySelectorAll('[data-profile]').forEach((b) => b.onclick = async () => { ui.sound = await api('sound_profile', { name: b.dataset.profile }); renderSound(); });
   drawEq(); wireEq();
 }
+
+/** Small things this window keeps for itself (which Fine tune is open, the amount a switch turns back on). */
+function remembered(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function remember(key, value) { try { localStorage.setItem(key, value); } catch { /* a convenience only */ } }
 
 function libraryStats() {
   const albums = new Set(ui.songs.map((t) => `${t.album.toLowerCase()}|${albumOwner(t).toLowerCase()}`)).size;
@@ -501,14 +584,14 @@ function renderSettings() {
       <div class="card"><span class="label">Appearance</span><div class="tiles">${[['auto', 'System'], ['scheduled', '7 PM–7 AM'], ['light', 'Light'], ['dark', 'Dark']].map(([v, n]) => `<button class="tile ${s.appearance === v ? 'on' : ''}" data-theme="${v}">${n}</button>`).join('')}</div><div class="count" style="margin-top:6px">System follows this computer. 7 PM–7 AM uses dark mode overnight.</div></div>
       <div class="card"><span class="label">Volume levelling</span><div class="tiles">${[['none', 'Off'], ['track', 'By song'], ['album', 'By album']].map(([v, n]) => `<button class="tile ${s.levelling === v ? 'on' : ''}" data-level="${v}">${n}</button>`).join('')}</div></div>
       <div class="card">
-        <div class="row-between"><span class="label">Crossfade</span><div class="right"><span class="value ${s.crossfade_on ? '' : 'off'}" id="xfV">${Math.round(s.crossfade_seconds)} s</span><button class="pill ${s.crossfade_on ? 'on' : ''}" id="xfP">${s.crossfade_on ? 'On' : 'Off'}</button></div></div>
+        <div class="row-between"><span class="label">Crossfade</span><div class="right"><span class="value ${s.crossfade_on ? '' : 'off'}" id="xfV">${Math.round(s.crossfade_seconds)} s</span>${toggle('xfP', s.crossfade_on, 'Crossfade')}</div></div>
         <input type="range" id="xf" min="1" max="12" step="1" value="${Math.round(s.crossfade_seconds)}" aria-label="Crossfade length"><div class="hints"><span>1 s</span><span>12 s</span></div>
       </div>
       <div class="card">
         <div class="row-between"><span class="label">Master gain</span><span class="value" id="mV">${signed(s.master_db)} dB</span></div>
         <input type="range" id="m" min="-12" max="6" step="1" value="${Math.round(s.master_db)}" aria-label="Master gain">
-        <div class="row-between"><span>Headroom, so peaks don't clip</span><button class="pill ${s.headroom ? 'on' : ''}" id="hrP">${s.headroom ? 'On' : 'Off'}</button></div>
-        <div class="row-between" style="margin-top:6px"><span>Dither, smoother quiet parts</span><button class="pill ${s.dither ? 'on' : ''}" id="ditherP">${s.dither ? 'On' : 'Off'}</button></div>
+        <div class="row-between"><span>Headroom, so peaks don't clip</span>${toggle('hrP', s.headroom, 'Headroom')}</div>
+        <div class="row-between" style="margin-top:6px"><span>Dither, smoother quiet parts</span>${toggle('ditherP', s.dither, 'Dither')}</div>
       </div>
     </div>
     <div class="cols">
@@ -518,7 +601,7 @@ function renderSettings() {
       <div class="count" style="margin-top:6px">Xciter scans these folders automatically while it is open. Removing one here never deletes your files.<span id="scanStatus">${ui.lastScan ? ` Last checked ${ui.lastScan.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : ''}</span></div>
     </div>
     <div class="card">
-      <div class="row-between"><span class="label">Share with my devices</span>${ui.share.locked ? '<span class="chip soft">Needs Pro</span>' : `<button class="pill ${ui.share.enabled ? 'on' : ''}" id="shareP" aria-label="Share with my devices">${ui.share.enabled ? 'On' : 'Off'}</button>`}</div>
+      <div class="row-between"><span class="label">Share with my devices</span>${ui.share.locked ? '<span class="chip soft">Needs Pro</span>' : toggle('shareP', ui.share.enabled, 'Share with my devices')}</div>
       <div class="count" style="margin-top:6px">${!ui.share.available ? 'Sharing could not start on this computer.' : ui.share.locked ? 'Sharing with your other devices is part of Xciter Pro. Enter your license key above and this computer can be found by your phones again.' : `Phones running Xciter on this network can ask to pair with ${esc(ui.share.name)}. Only devices you allow can see your music.`}</div>
       <div style="margin-top:6px">${ui.share.devices.map((d) => `<div class="folder"><span>${esc(d.name)}</span><button class="icon" data-device="${esc(d.id)}" aria-label="Unpair ${esc(d.name)}">${icon.close}</button></div>`).join('')}</div>
     </div>
@@ -745,7 +828,11 @@ function renderBar() {
       <button class="icon ${st.repeat !== 'off' ? 'lit' : 'dim'}" id="rp" aria-label="Repeat">${repeatIcon}</button>
     </div>
     <div class="time"><span id="at">${time(st.seconds)}</span><input type="range" id="seek" min="0" max="1000" value="0" aria-label="Position in the song"><span>${time(st.duration)}</span></div></div>
-    <div class="extra" title="Current audio output">${esc(st.device || 'System audio output')}</div>`;
+    <div class="extra"><button class="icon ${ui.sleepEnd ? 'lit' : ''}" id="sleep" aria-label="Sleep timer" title="Sleep timer">${icon.clock}</button><span id="sleepText">${sleepWords()}</span>
+      <span class="speaker">${icon.speaker}</span><span class="out" id="outText" title="Current audio output">${esc(st.device || 'System audio output')}</span>
+      <button class="icon" id="mini" aria-label="${ui.mini ? 'Full window' : 'Mini player'}" title="${ui.mini ? 'Full window' : 'Mini player'} (${/Mac/.test(navigator.platform) ? '⇧⌘M' : 'Ctrl+Shift+M'})">${ui.mini ? icon.full : icon.mini}</button></div>`;
+  $('#mini').onclick = () => setMini(!ui.mini);
+  $('#sleep').onclick = chooseSleepTimer;
   $('#sh').onclick = () => api('toggle_shuffle').then(refreshState);
   $('#pv').onclick = () => api('previous').then(refreshState);
   $('#pp').onclick = () => api('toggle').then(refreshState);
@@ -754,9 +841,21 @@ function renderBar() {
   const seek = $('#seek');
   seek.onpointerdown = () => { ui.dragging = true; };
   seek.oninput = () => { fillRange(seek); $('#at').textContent = time((seek.value / 1000) * (ui.state.duration || 0)); };
-  seek.onchange = () => { ui.dragging = false; api('seek', { seconds: Math.min((seek.value / 1000) * (ui.state.duration || 0), Math.max(0, (ui.state.duration || 0) - 0.5)) }).then(refreshState); };
+  // The bar stays where it was let go until the seek is done: a state asked for before it still says the old place.
+  seek.onchange = () => { ui.dragging = true; api('seek', { seconds: Math.min((seek.value / 1000) * (ui.state.duration || 0), Math.max(0, (ui.state.duration || 0) - 0.5)) }).finally(() => { ui.dragging = false; refreshState(); }); };
   updatePosition();
   watchArt($('#bar'));
+}
+/** The mini player: only the song, the transport and the position, in a small window kept above the others. */
+async function setMini(on) {
+  if (on === ui.mini) return;
+  closeMenu(); closeDialog();
+  try { await api('set_mini', { on }); } catch (refused) { notice(String(refused)); return; }
+  ui.mini = on;
+  document.body.classList.toggle('mini', on);
+  api('set_meter', { wanted: !on && ui.page === 'playing' });
+  renderBar();
+  if (!on) render();
 }
 function updatePosition() {
   const st = ui.state, seek = $('#seek'); if (!st || !seek || ui.dragging) return;
@@ -896,10 +995,13 @@ function pairRequest(request) {
 // ---- Start -------------------------------------------------------------------------------------
 document.querySelectorAll('#rail button').forEach((b) => b.onclick = () => show(b.dataset.page));
 document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenu(); });
+// A held Compare lets go with the pointer, wherever that happens (the button may have been redrawn meanwhile).
+for (const end of ['pointerup', 'pointercancel', 'blur']) addEventListener(end, () => { if (ui.comparing) setCompare(false); });
 document.addEventListener('keydown', (e) => {
   const typing = e.target.matches('input:not([type=range])');
   if (e.key === 'Escape') { closeMenu(); closeDialog(); }
   if (typing) return;
+  if (e.code === 'KeyM' && e.shiftKey && (e.metaKey || e.ctrlKey)) { e.preventDefault(); setMini(!ui.mini); return; }
   if (e.code === 'Space' && !e.target.matches('button')) { e.preventDefault(); api('toggle').then(refreshState); }
   if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey)) api('next').then(refreshState);
   if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) api('previous').then(refreshState);
@@ -923,7 +1025,8 @@ addEventListener('resize', () => { if (ui.page === 'sound') drawEq(); });
     ui.license = license; ui.share = share; await loadDevices();
     if (changed && ui.page === 'settings' && !ui.licenseBusy && $('#overlay').hidden && document.activeElement?.id !== 'keyBox') renderSettings();
   });
-  window.__TAURI__.event.listen('pair-request', (e) => pairRequest(e.payload));
+  // A question needs the full window: it does not fit in the mini player.
+  window.__TAURI__.event.listen('pair-request', async (e) => { await setMini(false); pairRequest(e.payload); });
   window.__TAURI__.event.listen('devices-changed', loadDevices);
   setInterval(refreshState, 500);
   setInterval(syncLibrary, 10000);
