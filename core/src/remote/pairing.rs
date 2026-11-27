@@ -49,13 +49,20 @@ impl Remote {
                 me.changed();
             }
         };
-        let ((ip, port), print) = match first_look(&found) {
+        let ((ip, port), print, protocol) = match first_look(&found) {
             Ok(seen) => seen,
             Err(RemoteError::NoSecureConnection) => {
                 return fail(self, "Couldn't start a secure connection.")
             }
             Err(_) => return fail(self, &format!("Couldn't reach {}.", found.name)),
         };
+        let outdated = format!(
+            "{} needs the newest Xciter to pair. Update it and try again.",
+            found.name
+        );
+        if protocol < PAIRING_PROTOCOL {
+            return fail(self, &outdated);
+        }
         let mut random = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut random);
         let nonce = hex(&random);
@@ -86,15 +93,7 @@ impl Remote {
                     ),
                 )
             }
-            Err(ureq::Error::Status(404 | 426, _)) => {
-                return fail(
-                    self,
-                    &format!(
-                        "{} needs the newest Xciter to pair. Update it and try again.",
-                        found.name
-                    ),
-                )
-            }
+            Err(ureq::Error::Status(404 | 426, _)) => return fail(self, &outdated),
             Err(_) => None,
         };
         let Some(host_nonce) = host_nonce else {
@@ -183,20 +182,27 @@ impl Remote {
 }
 
 /// The first look at a device has no certificate to compare with: it records the one it sees, at the
-/// first address that answers. Returns that address and the certificate's fingerprint.
-fn first_look(found: &Nearby) -> Result<((Ipv4Addr, u16), String), RemoteError> {
+/// first address that answers. Returns that address, the certificate's fingerprint and the pairing protocol it speaks.
+fn first_look(found: &Nearby) -> Result<((Ipv4Addr, u16), String, u64), RemoteError> {
     let Some(look) = Client::new(None, Duration::from_secs(5)) else {
         return Err(RemoteError::NoSecureConnection);
     };
-    let reached = found.addresses.iter().copied().find(|(ip, port)| {
-        look.agent
+    let reached = found.addresses.iter().copied().find_map(|(ip, port)| {
+        let answer = look
+            .agent
             .get(&format!("https://{ip}:{port}/info"))
             .timeout(Duration::from_secs(4))
             .call()
-            .is_ok()
+            .ok()?;
+        let protocol = answer
+            .into_json::<serde_json::Value>()
+            .ok()
+            .and_then(|v| v["pairing"].as_u64())
+            .unwrap_or(1);
+        Some(((ip, port), protocol))
     });
     match (reached, look.seen()) {
-        (Some(address), Some(print)) => Ok((address, print)),
+        (Some((address, protocol)), Some(print)) => Ok((address, print, protocol)),
         _ => Err(RemoteError::NotReachable),
     }
 }

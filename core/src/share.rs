@@ -29,6 +29,8 @@ use std::time::{Duration, Instant};
 
 const SERVICE: &str = "_xciter._tcp.local.";
 const PREFERRED_PORT: u16 = 47921;
+/// The pairing protocol this app speaks (`docs/pairing-protocol.md` in the phone apps' repository).
+pub(crate) const PAIRING_PROTOCOL: u64 = 2;
 /// How long a started pairing waits for the device to reveal its nonce.
 const REVEAL_WINDOW: Duration = Duration::from_secs(30);
 /// The least time between two pairing starts, so a guess at the code cannot be repeated quickly.
@@ -554,8 +556,8 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
 fn serve_info(tls: &mut Tls, shared: &Shared) -> std::io::Result<()> {
     let id = lock(&shared.identity).host_id.clone();
     let library_version = shared.library_version.load(Ordering::Relaxed);
-    let info =
-        json!({ "id": id, "name": shared.name, "version": 1, "libraryVersion": library_version });
+    // `pairing` tells a device which pairing this computer speaks before it starts one; older computer apps say nothing.
+    let info = json!({ "id": id, "name": shared.name, "version": 1, "pairing": PAIRING_PROTOCOL, "libraryVersion": library_version });
     respond(
         tls,
         "200 OK",

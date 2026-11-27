@@ -216,6 +216,21 @@ fn the_cache_name_never_leaves_the_cache_folder() {
 }
 
 #[test]
+fn info_says_which_pairing_this_computer_speaks() {
+    // A device reads this before it starts a pairing, and tells the person to update an older computer app, which says nothing.
+    let p = setup("info-protocol");
+    let client = Client::new(None, Duration::from_secs(5)).expect("client");
+    let info: serde_json::Value = client
+        .agent
+        .get(&format!("https://127.0.0.1:{}/info", p.host.port()))
+        .call()
+        .expect("info")
+        .into_json()
+        .expect("json");
+    assert_eq!(info["pairing"], 2);
+}
+
+#[test]
 fn the_first_pairing_protocol_is_refused_with_a_request_to_update() {
     // The first protocol let the device choose the nonce the code is made from, which does not stop someone in the middle,
     // so a device that still uses it is told to update instead of being paired.
@@ -237,6 +252,8 @@ fn the_first_pairing_protocol_is_refused_with_a_request_to_update() {
 }
 
 #[test]
+// The closure hands back ureq's own error, which newer Clippy calls large; it only matters to this test.
+#[allow(clippy::result_large_err)]
 fn a_pairing_cannot_finish_with_a_nonce_that_was_not_committed_to() {
     let p = setup("wrong-nonce");
     let client = Client::new(None, Duration::from_secs(5)).expect("client");

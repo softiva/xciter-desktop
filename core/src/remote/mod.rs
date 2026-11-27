@@ -7,7 +7,7 @@
 //! reads files), and the next few songs of the queue are fetched ahead.
 use crate::engine::Event;
 use crate::library::{ReplayGain, Track};
-use crate::share::{nonce_commitment, pairing_code};
+use crate::share::{nonce_commitment, pairing_code, PAIRING_PROTOCOL};
 use crate::sync::lock;
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use rand::RngCore;
