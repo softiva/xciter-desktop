@@ -53,14 +53,11 @@ function coverHue(name) {
   for (const byte of new TextEncoder().encode(name.trim().toLowerCase())) hash = Math.imul(hash ^ byte, 16777619) >>> 0;
   return hash % 360;
 }
+// Two letters: from the first two words, or the first two of a single word; a note when the name has none.
 function coverInitials(name) {
-  let found = '';
-  for (const word of name.trim().split(/\s+/)) {
-    const first = [...word].find((c) => /[\p{L}\p{N}]/u.test(c));
-    if (first) found += first.toUpperCase();
-    if ([...found].length >= 2) break;
-  }
-  return found;
+  const words = name.trim().split(/\s+/).map((word) => [...word].filter((c) => /[\p{L}\p{N}]/u.test(c))).filter((letters) => letters.length);
+  if (!words.length) return '♪';
+  return (words.length > 1 ? words[0][0] + words[1][0] : words[0].slice(0, 2).join('')).toUpperCase();
 }
 function hsv(h, s, v) {
   const f = (n) => { const k = (n + h / 60) % 6; return Math.round(255 * (v - v * s * Math.max(0, Math.min(k, 4 - k, 1)))); };
