@@ -3,6 +3,10 @@
 //! Devices find it by Bonjour. All traffic is TLS with this computer's own certificate. A new device
 //! pins that certificate, and both sides show a code made from it, so the person pairing can tell
 //! they are talking to the right computer. Afterwards every request carries a secret token.
+//!
+//! Pairing (protocol 2) is `POST /pair/start` then `POST /pair/finish`: the device first commits to a secret nonce, the computer answers
+//! with its own, and only then does the device reveal its nonce. The code both people see is made from the certificate and both nonces,
+//! so nobody in the middle can choose nonces that make the two codes agree (the device's is fixed before the computer's is known).
 use crate::library::Track;
 use crate::sync::lock;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
@@ -21,10 +25,16 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SERVICE: &str = "_xciter._tcp.local.";
 const PREFERRED_PORT: u16 = 47921;
+/// How long a started pairing waits for the device to reveal its nonce.
+const REVEAL_WINDOW: Duration = Duration::from_secs(30);
+/// The least time between two pairing starts, so a guess at the code cannot be repeated quickly.
+const MIN_GAP_BETWEEN_STARTS: Duration = Duration::from_secs(3);
+/// How long the person at this computer has to answer.
+const ANSWER_WINDOW: Duration = Duration::from_secs(90);
 
 #[derive(Clone, Serialize, Deserialize)]
 /// A device allowed to read this computer's music.
@@ -60,6 +70,119 @@ pub struct PairRequest {
     pub code: String,
 }
 
+/// A pairing that has started: the device's commitment and the computer's nonce.
+struct Pending {
+    id: String,
+    name: String,
+    commit: String,
+    host_nonce: String,
+    started: Instant,
+    /// True once the nonce was revealed and the person is being asked.
+    asking: bool,
+}
+
+/// The one pairing that may be going on at a time, and when the last one started.
+#[derive(Default)]
+struct PairSlot {
+    pending: Option<Pending>,
+    last_start: Option<Instant>,
+}
+
+/// Why a pairing could not start or finish, and the HTTP answer for it.
+#[derive(Debug, PartialEq)]
+enum PairRefused {
+    /// Another pairing is going on.
+    Busy,
+    /// A pairing started too soon after the last one.
+    TooSoon,
+    /// Nothing was started by this device, or it has run out of time.
+    NotStarted,
+    /// The revealed nonce is not the one committed to.
+    BadNonce,
+    /// The request is not what was expected.
+    Malformed,
+}
+
+impl PairRefused {
+    fn status(&self) -> &'static str {
+        match self {
+            PairRefused::Busy => "409 Conflict",
+            PairRefused::TooSoon => "429 Too Many Requests",
+            PairRefused::NotStarted => "404 Not Found",
+            PairRefused::BadNonce => "403 Forbidden",
+            PairRefused::Malformed => "400 Bad Request",
+        }
+    }
+}
+
+impl PairSlot {
+    /// A device asks to pair with this commitment. Returns the computer's nonce for it.
+    fn start(
+        &mut self,
+        now: Instant,
+        id: &str,
+        name: &str,
+        commit: &str,
+        host_nonce: String,
+    ) -> Result<String, PairRefused> {
+        let sound = commit.len() == 64 && commit.bytes().all(|b| b.is_ascii_hexdigit());
+        if id.is_empty() || !sound {
+            return Err(PairRefused::Malformed);
+        }
+        if let Some(pending) = &self.pending {
+            if pending.asking || now.saturating_duration_since(pending.started) < REVEAL_WINDOW {
+                return Err(PairRefused::Busy);
+            }
+            self.pending = None; // it was never revealed and has run out of time
+        }
+        if let Some(last) = self.last_start {
+            if now.saturating_duration_since(last) < MIN_GAP_BETWEEN_STARTS {
+                return Err(PairRefused::TooSoon);
+            }
+        }
+        self.last_start = Some(now);
+        self.pending = Some(Pending {
+            id: id.to_string(),
+            name: name.chars().take(60).collect(),
+            commit: commit.to_lowercase(),
+            host_nonce: host_nonce.clone(),
+            started: now,
+            asking: false,
+        });
+        Ok(host_nonce)
+    }
+
+    /// The device reveals its nonce. Returns the device's name and the computer's nonce, once, when the nonce is the one committed to.
+    /// A wrong nonce ends the pairing, so there is no second guess.
+    fn reveal(
+        &mut self,
+        now: Instant,
+        id: &str,
+        nonce: &str,
+    ) -> Result<(String, String), PairRefused> {
+        let Some(pending) = self.pending.as_mut() else {
+            return Err(PairRefused::NotStarted);
+        };
+        if pending.id != id || pending.asking {
+            return Err(PairRefused::NotStarted);
+        }
+        if now.saturating_duration_since(pending.started) >= REVEAL_WINDOW {
+            self.pending = None;
+            return Err(PairRefused::NotStarted);
+        }
+        if nonce_commitment(nonce) != pending.commit {
+            self.pending = None;
+            return Err(PairRefused::BadNonce);
+        }
+        pending.asking = true;
+        Ok((pending.name.clone(), pending.host_nonce.clone()))
+    }
+
+    fn clear(&mut self) {
+        self.pending = None;
+    }
+}
+
 struct Shared {
     path: PathBuf,
     name: String,
@@ -67,6 +190,7 @@ struct Shared {
     identity: Mutex<Identity>,
     songs: Mutex<HashMap<String, (Track, PathBuf)>>,
     waiting: Mutex<HashMap<String, Sender<bool>>>,
+    pairing: Mutex<PairSlot>,
     on_request: Box<dyn Fn(PairRequest) + Send + Sync>,
     enabled: AtomicBool,
     allowed: AtomicBool,
@@ -88,13 +212,28 @@ fn sha(text: &[u8]) -> String {
     hex(&Sha256::digest(text))
 }
 
-/// The code both sides show: anyone in the middle would have a different certificate, so a different code.
-pub fn pairing_code(fingerprint: &str, nonce: &str) -> String {
-    let digest = Sha256::digest(format!("{fingerprint}:{nonce}").as_bytes());
+/// What a device sends first: a commitment to its nonce, so that it cannot choose the nonce after seeing the computer's.
+pub fn nonce_commitment(nonce: &str) -> String {
+    sha(nonce.as_bytes())
+}
+
+/// The code both sides show. It is made from the certificate and both nonces. The device's nonce is committed to before the computer's
+/// is known, so someone in the middle cannot pick nonces that make the two codes agree.
+pub fn pairing_code(fingerprint: &str, device_nonce: &str, host_nonce: &str) -> String {
+    let digest = Sha256::digest(
+        format!("xciter-pairing-2:{fingerprint}:{device_nonce}:{host_nonce}").as_bytes(),
+    );
     format!(
         "{:06}",
         u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % 1_000_000
     )
+}
+
+/// A fresh nonce for the computer's side of a pairing.
+fn new_nonce() -> String {
+    let mut random = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut random);
+    hex(&random)
 }
 
 /// The saved identity, or a new one with a fresh certificate; `None` only if no certificate can be made.
@@ -151,6 +290,7 @@ impl Share {
             identity: Mutex::new(identity),
             songs: Mutex::new(HashMap::new()),
             waiting: Mutex::new(HashMap::new()),
+            pairing: Mutex::new(PairSlot::default()),
             on_request: Box::new(on_request),
             enabled: AtomicBool::new(enabled),
             allowed: AtomicBool::new(allowed),
@@ -362,7 +502,7 @@ fn is_paired(shared: &Shared, headers: &HashMap<String, String>) -> bool {
             .any(|d| d.token_hash == hashed)
 }
 
-/// Answers one connection. `/info` and `/pair` are open; everything else needs a paired device's token.
+/// Answers one connection. `/info`, `/pair/start` and `/pair/finish` are open; everything else needs a paired device's token.
 fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std::io::Result<()> {
     tcp.set_read_timeout(Some(Duration::from_secs(120)))?;
     let connection = ServerConnection::new(config).map_err(std::io::Error::other)?;
@@ -375,16 +515,24 @@ fn serve(tcp: TcpStream, shared: Arc<Shared>, config: Arc<ServerConfig>) -> std:
     if method == "GET" && path == "/info" {
         return serve_info(&mut tls, &shared);
     }
+    if method == "POST" && path == "/pair/start" {
+        let body = read_body(&mut tls, &request)?;
+        return pair_start(&mut tls, &shared, &body);
+    }
+    if method == "POST" && path == "/pair/finish" {
+        let body = read_body(&mut tls, &request)?;
+        return pair_finish(&mut tls, &shared, &body);
+    }
     if method == "POST" && path == "/pair" {
-        let length: usize = request
-            .headers
-            .get("content-length")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0)
-            .min(4096);
-        let mut body = vec![0u8; length];
-        tls.read_exact(&mut body)?;
-        return pair(&mut tls, &shared, &body);
+        // The first protocol let the device choose the nonce the code is made from, which does not stop someone in the middle.
+        // Its body is read first so the answer is not lost to a reset when the connection closes.
+        let _ = read_body(&mut tls, &request)?;
+        return respond(
+            &mut tls,
+            "426 Upgrade Required",
+            "text/plain",
+            b"update Xciter on the device to pair",
+        );
     }
     if !is_paired(&shared, &request.headers) {
         return respond(&mut tls, "401 Unauthorized", "text/plain", b"not paired");
@@ -456,27 +604,73 @@ fn serve_art(tls: &mut Tls, shared: &Shared, id: &str, query: &str) -> std::io::
     }
 }
 
-/// Waits for the person at this computer to answer, then hands the device its token.
-fn pair(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()> {
+/// The request body, at most 4 KiB.
+fn read_body(tls: &mut Tls, request: &Request) -> std::io::Result<Vec<u8>> {
+    let length: usize = request
+        .headers
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+        .min(4096);
+    let mut body = vec![0u8; length];
+    tls.read_exact(&mut body)?;
+    Ok(body)
+}
+
+fn refuse(tls: &mut Tls, why: PairRefused) -> std::io::Result<()> {
+    respond(tls, why.status(), "text/plain", b"not now")
+}
+
+/// Step one: the device commits to its nonce and gets the computer's.
+fn pair_start(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()> {
     let value: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
-    let (Some(id), Some(name), Some(nonce)) = (
+    let (Some(id), Some(name), Some(commit)) = (
         value["id"].as_str(),
         value["name"].as_str(),
-        value["nonce"].as_str(),
+        value["commit"].as_str(),
     ) else {
-        return respond(tls, "400 Bad Request", "text/plain", b"bad request");
+        return refuse(tls, PairRefused::Malformed);
     };
-    let name: String = name.chars().take(60).collect();
+    let answer = lock(&shared.pairing).start(Instant::now(), id, name, commit, new_nonce());
+    match answer {
+        Ok(nonce) => respond(
+            tls,
+            "200 OK",
+            "application/json",
+            json!({ "nonce": nonce }).to_string().as_bytes(),
+        ),
+        Err(why) => refuse(tls, why),
+    }
+}
+
+/// Ends a pairing's place in the slot however the request leaves.
+struct SlotGuard<'a>(&'a Shared);
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        lock(&self.0.pairing).clear();
+    }
+}
+
+/// Step two: the device reveals its nonce; the person at this computer is asked, and the device gets its token if they allow it.
+fn pair_finish(tls: &mut Tls, shared: &Arc<Shared>, body: &[u8]) -> std::io::Result<()> {
+    let value: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+    let (Some(id), Some(nonce)) = (value["id"].as_str(), value["nonce"].as_str()) else {
+        return refuse(tls, PairRefused::Malformed);
+    };
+    let revealed = lock(&shared.pairing).reveal(Instant::now(), id, nonce);
+    let (name, host_nonce) = match revealed {
+        Ok(found) => found,
+        Err(why) => return refuse(tls, why),
+    };
+    let _in_the_slot = SlotGuard(shared);
     let (answer, waiting) = channel();
     lock(&shared.waiting).insert(id.to_string(), answer);
     (shared.on_request)(PairRequest {
         id: id.to_string(),
         name: name.clone(),
-        code: pairing_code(&shared.fingerprint, nonce),
+        code: pairing_code(&shared.fingerprint, nonce, &host_nonce),
     });
-    let allowed = waiting
-        .recv_timeout(Duration::from_secs(90))
-        .unwrap_or(false);
+    let allowed = waiting.recv_timeout(ANSWER_WINDOW).unwrap_or(false);
     lock(&shared.waiting).remove(id);
     if !allowed {
         return respond(tls, "403 Forbidden", "text/plain", b"declined");
@@ -527,6 +721,7 @@ mod tests {
             identity: Mutex::new(identity),
             songs: Mutex::new(HashMap::new()),
             waiting: Mutex::new(HashMap::new()),
+            pairing: Mutex::new(PairSlot::default()),
             on_request: Box::new(|_| {}),
             enabled: AtomicBool::new(true),
             allowed: AtomicBool::new(true),
@@ -542,11 +737,193 @@ mod tests {
 
     #[test]
     fn the_pairing_code_is_six_digits_and_the_same_on_both_devices() {
-        let code = pairing_code("fingerprint", "nonce");
+        let code = pairing_code("fingerprint", "device", "host");
         assert_eq!(code.len(), 6);
         assert!(code.chars().all(|c| c.is_ascii_digit()));
-        assert_eq!(code, pairing_code("fingerprint", "nonce"));
-        assert_ne!(code, pairing_code("fingerprint", "other nonce"));
+        assert_eq!(code, pairing_code("fingerprint", "device", "host"));
+        assert_ne!(code, pairing_code("fingerprint", "other", "host"));
+        assert_ne!(code, pairing_code("fingerprint", "device", "other"));
+        assert_ne!(code, pairing_code("another certificate", "device", "host"));
+    }
+
+    /// The same inputs must give the same code in every app that pairs (desktop, Android, iPhone): these are the shared test vectors.
+    #[test]
+    fn the_pairing_code_and_commitment_match_the_other_apps() {
+        let (fingerprint, device, host) = (
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+            "0123456789abcdef0123456789abcdef",
+            "fedcba9876543210fedcba9876543210",
+        );
+        assert_eq!(
+            nonce_commitment(device),
+            "3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9"
+        );
+        assert_eq!(pairing_code(fingerprint, device, host), "411484");
+    }
+
+    fn commit_to(nonce: &str) -> String {
+        nonce_commitment(nonce)
+    }
+
+    #[test]
+    fn a_pairing_needs_the_nonce_that_was_committed_to() {
+        let mut slot = PairSlot::default();
+        let t0 = Instant::now();
+        let host_nonce = slot
+            .start(
+                t0,
+                "phone",
+                "Phone",
+                &commit_to("secret"),
+                "host-nonce".into(),
+            )
+            .unwrap();
+        assert_eq!(host_nonce, "host-nonce");
+        let (name, answered) = slot
+            .reveal(t0 + Duration::from_secs(1), "phone", "secret")
+            .unwrap();
+        assert_eq!((name.as_str(), answered.as_str()), ("Phone", "host-nonce"));
+    }
+
+    #[test]
+    fn a_different_nonce_ends_the_pairing_with_no_second_guess() {
+        let mut slot = PairSlot::default();
+        let t0 = Instant::now();
+        slot.start(t0, "phone", "Phone", &commit_to("secret"), "h".into())
+            .unwrap();
+        assert_eq!(
+            slot.reveal(t0, "phone", "another"),
+            Err(PairRefused::BadNonce)
+        );
+        assert_eq!(
+            slot.reveal(t0, "phone", "secret"),
+            Err(PairRefused::NotStarted),
+            "the right nonce no longer works once a wrong one was sent"
+        );
+    }
+
+    #[test]
+    fn only_one_pairing_at_a_time_and_a_pause_between_starts() {
+        let mut slot = PairSlot::default();
+        let t0 = Instant::now();
+        slot.start(t0, "one", "One", &commit_to("a"), "h1".into())
+            .unwrap();
+        assert_eq!(
+            slot.start(
+                t0 + Duration::from_secs(5),
+                "two",
+                "Two",
+                &commit_to("b"),
+                "h2".into()
+            ),
+            Err(PairRefused::Busy),
+            "a started pairing holds the place"
+        );
+        // After it runs out unrevealed, another may start, but not within the pause after the last start.
+        let late = t0 + REVEAL_WINDOW + Duration::from_secs(1);
+        assert!(slot
+            .start(late, "two", "Two", &commit_to("b"), "h2".into())
+            .is_ok());
+        let mut quick = PairSlot::default();
+        quick
+            .start(t0, "one", "One", &commit_to("a"), "h1".into())
+            .unwrap();
+        quick.reveal(t0, "one", "wrong").unwrap_err();
+        assert_eq!(
+            quick.start(
+                t0 + Duration::from_secs(1),
+                "one",
+                "One",
+                &commit_to("a"),
+                "h3".into()
+            ),
+            Err(PairRefused::TooSoon)
+        );
+        assert!(quick
+            .start(
+                t0 + MIN_GAP_BETWEEN_STARTS,
+                "one",
+                "One",
+                &commit_to("a"),
+                "h3".into()
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn a_revealed_pairing_holds_the_place_until_it_is_cleared() {
+        let mut slot = PairSlot::default();
+        let t0 = Instant::now();
+        slot.start(t0, "phone", "Phone", &commit_to("s"), "h".into())
+            .unwrap();
+        slot.reveal(t0, "phone", "s").unwrap();
+        let much_later = t0 + Duration::from_secs(80);
+        assert_eq!(
+            slot.start(much_later, "other", "Other", &commit_to("x"), "h2".into()),
+            Err(PairRefused::Busy),
+            "while the person is being asked nobody else can start"
+        );
+        assert_eq!(
+            slot.reveal(much_later, "phone", "s"),
+            Err(PairRefused::NotStarted),
+            "a nonce is revealed once"
+        );
+        slot.clear();
+        assert!(slot
+            .start(
+                much_later + MIN_GAP_BETWEEN_STARTS,
+                "other",
+                "Other",
+                &commit_to("x"),
+                "h2".into()
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn a_pairing_that_is_never_revealed_runs_out_of_time() {
+        let mut slot = PairSlot::default();
+        let t0 = Instant::now();
+        slot.start(t0, "phone", "Phone", &commit_to("s"), "h".into())
+            .unwrap();
+        assert_eq!(
+            slot.reveal(t0 + REVEAL_WINDOW, "phone", "s"),
+            Err(PairRefused::NotStarted)
+        );
+    }
+
+    #[test]
+    fn only_the_device_that_started_can_reveal() {
+        let mut slot = PairSlot::default();
+        let t0 = Instant::now();
+        slot.start(t0, "phone", "Phone", &commit_to("s"), "h".into())
+            .unwrap();
+        assert_eq!(
+            slot.reveal(t0, "someone else", "s"),
+            Err(PairRefused::NotStarted)
+        );
+        assert!(
+            slot.reveal(t0, "phone", "s").is_ok(),
+            "the real device is not locked out by that"
+        );
+    }
+
+    #[test]
+    fn a_malformed_start_is_refused() {
+        let mut slot = PairSlot::default();
+        let t0 = Instant::now();
+        assert_eq!(
+            slot.start(t0, "", "Phone", &commit_to("s"), "h".into()),
+            Err(PairRefused::Malformed)
+        );
+        assert_eq!(
+            slot.start(t0, "phone", "Phone", "short", "h".into()),
+            Err(PairRefused::Malformed)
+        );
+        assert_eq!(
+            slot.start(t0, "phone", "Phone", &"z".repeat(64), "h".into()),
+            Err(PairRefused::Malformed)
+        );
     }
 
     #[test]

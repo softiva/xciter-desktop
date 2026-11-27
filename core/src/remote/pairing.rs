@@ -59,26 +59,67 @@ impl Remote {
         let mut random = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut random);
         let nonce = hex(&random);
-        let code = pairing_code(&print, &nonce);
+        // Step one: commit to the nonce without showing it, and get the computer's nonce. The code can only be made after both,
+        // and the computer's was chosen before this device's nonce was revealed, so someone in the middle cannot steer the code.
+        let Some(start) = Client::new(Some(print.clone()), Duration::from_secs(10)) else {
+            return fail(self, "Couldn't start a secure connection.");
+        };
+        let started = start
+            .agent
+            .post(&format!("https://{ip}:{port}/pair/start"))
+            .set("Content-Type", "application/json")
+            .send_string(
+                &json!({ "id": self.own_id, "name": self.own_name, "commit": nonce_commitment(&nonce) }).to_string(),
+            );
+        let host_nonce = match started {
+            Ok(response) => response
+                .into_json::<serde_json::Value>()
+                .ok()
+                .and_then(|v| v["nonce"].as_str().map(str::to_string))
+                .filter(|n| !n.is_empty() && n.len() <= 64),
+            Err(ureq::Error::Status(409 | 429, _)) => {
+                return fail(
+                    self,
+                    &format!(
+                        "{} is busy with another pairing. Try again in a moment.",
+                        found.name
+                    ),
+                )
+            }
+            Err(ureq::Error::Status(404 | 426, _)) => {
+                return fail(
+                    self,
+                    &format!(
+                        "{} needs the newest Xciter to pair. Update it and try again.",
+                        found.name
+                    ),
+                )
+            }
+            Err(_) => None,
+        };
+        let Some(host_nonce) = host_nonce else {
+            return fail(
+                self,
+                &format!("Couldn't start pairing with {}. Try again.", found.name),
+            );
+        };
         if !current(self) {
             return;
         }
         lock(&self.state).pairing = Some(Pairing::Confirm {
             name: found.name.clone(),
-            code,
+            code: pairing_code(&print, &nonce, &host_nonce),
         });
         self.changed();
-        // This waits, up to about 90 seconds, for the person to answer on the other device.
+        // Step two: reveal the nonce. This waits, up to about 90 seconds, for the person to answer on the other device.
         let Some(wait) = Client::new(Some(print.clone()), Duration::from_secs(100)) else {
             return fail(self, "Couldn't start a secure connection.");
         };
         let result = wait
             .agent
-            .post(&format!("https://{ip}:{port}/pair"))
+            .post(&format!("https://{ip}:{port}/pair/finish"))
             .set("Content-Type", "application/json")
-            .send_string(
-                &json!({ "id": self.own_id, "name": self.own_name, "nonce": nonce }).to_string(),
-            );
+            .send_string(&json!({ "id": self.own_id, "nonce": nonce }).to_string());
         if !current(self) {
             return;
         }

@@ -214,3 +214,52 @@ fn the_cache_name_never_leaves_the_cache_folder() {
     assert!(path.starts_with(remote.cache_dir()) && path.to_string_lossy().ends_with(".bin"));
     assert!(remote.path_of("/not/remote").is_none());
 }
+
+#[test]
+fn the_first_pairing_protocol_is_refused_with_a_request_to_update() {
+    // The first protocol let the device choose the nonce the code is made from, which does not stop someone in the middle,
+    // so a device that still uses it is told to update instead of being paired.
+    let p = setup("old-protocol");
+    let client = Client::new(None, Duration::from_secs(5)).expect("client");
+    let sent = client
+        .agent
+        .post(&format!("https://127.0.0.1:{}/pair", p.host.port()))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"id":"old-phone","name":"Old phone","nonce":"n"}"#);
+    match sent {
+        Err(ureq::Error::Status(426, _)) => {}
+        other => panic!("expected 426 Upgrade Required, got {other:?}"),
+    }
+    assert!(
+        p.requests.recv_timeout(Duration::from_millis(300)).is_err(),
+        "nobody is asked about a pairing that is refused"
+    );
+}
+
+#[test]
+fn a_pairing_cannot_finish_with_a_nonce_that_was_not_committed_to() {
+    let p = setup("wrong-nonce");
+    let client = Client::new(None, Duration::from_secs(5)).expect("client");
+    let base = format!("https://127.0.0.1:{}", p.host.port());
+    let post = |path: &str, body: String| {
+        client
+            .agent
+            .post(&format!("{base}{path}"))
+            .set("Content-Type", "application/json")
+            .send_string(&body)
+    };
+    let committed = post(
+        "/pair/start",
+        json!({ "id": "phone", "name": "Phone", "commit": crate::share::nonce_commitment("the real nonce") }).to_string(),
+    );
+    assert!(committed.is_ok(), "start: {committed:?}");
+    // Revealing some other nonce is refused, and nobody is asked.
+    match post(
+        "/pair/finish",
+        json!({ "id": "phone", "nonce": "a different nonce" }).to_string(),
+    ) {
+        Err(ureq::Error::Status(403, _)) => {}
+        other => panic!("expected 403, got {other:?}"),
+    }
+    assert!(p.requests.recv_timeout(Duration::from_millis(300)).is_err());
+}
